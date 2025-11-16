@@ -10,10 +10,7 @@ import javafx.application.Application;
 import javafx.collections.FXCollections;
 import javafx.collections.ObservableList;
 import javafx.geometry.Insets;
-import javafx.fxml.FXMLLoader;
 import javafx.geometry.Pos;
-import javafx.scene.Node;
-import javafx.scene.Parent;
 import javafx.scene.Scene;
 import javafx.scene.control.Button;
 import javafx.scene.control.Label;
@@ -34,7 +31,6 @@ public class App extends Application {
     private Button selectedButton;
     private final String defaultButtonStyle = "-fx-background-color: #555555; -fx-text-fill: white;";
     private final String selectedButtonStyle = "-fx-background-color: #555555; -fx-text-fill: red;";
-    private TodoController todoController;
 
     private ObservableList<String> todoItems;
     private final Path todoFilePath = getTodoFilePath();
@@ -157,7 +153,6 @@ public class App extends Application {
         todoBtn.setOnAction(e -> {
             updateSelection(todoBtn);
             root.setCenter(todoView);
-            root.setCenter(loadView("todoview.fxml"));
         });
         projectDataBtn.setOnAction(e -> {
             label.setText("Project Data Management");
@@ -205,27 +200,11 @@ public class App extends Application {
         // Store data in a hidden directory in the user's home folder
         Path appDataDir = Paths.get(userHome, ".petools");
         return appDataDir.resolve("todos.txt");
-    private Node loadView(String fxmlFile) {
-        try {
-            FXMLLoader loader = new FXMLLoader(App.class.getResource(fxmlFile));
-            Parent view = loader.load();
-            // If we are loading the to-do view, get its controller to save data later
-            if ("todoview.fxml".equals(fxmlFile)) {
-                todoController = loader.getController();
-            }
-            return view;
-        } catch (IOException e) {
-            e.printStackTrace();
-            return new Label("Error loading view: " + fxmlFile);
-        }
     }
 
     @Override
     public void stop() throws Exception {
         saveTodoItems();
-        if (todoController != null) {
-            todoController.saveTodoItems();
-        }
         super.stop();
     }
 
