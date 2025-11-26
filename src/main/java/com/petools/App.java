@@ -114,9 +114,9 @@ public class App extends Application {
         root.setCenter(homeView);
         root.setLeft(sidebar);
 
-        // ===================== //
-        // --- Projects View --- //
-        // ===================== //
+        /* ===================== */
+        /* --- Projects View --- */
+        /* ===================== */
         VBox projectView = new VBox(10);
         projectView.setPadding(new Insets(20));
         projectView.setStyle("-fx-background-color: #ffffff;");
@@ -148,9 +148,19 @@ public class App extends Application {
             }
         });
 
+        newProjectNameField.setOnAction(addProjectBtn.getOnAction()); // Trigger add on Enter key
+
         deleteProjectBtn.setOnAction(e -> {
             Project selected = projectListView.getSelectionModel().getSelectedItem();
             if (selected != null) projectList.remove(selected);
+        });
+
+        // Delete on key press
+        projectListView.setOnKeyPressed(event -> {
+            if (event.getCode() == KeyCode.DELETE) {
+                Project selectedItem = projectListView.getSelectionModel().getSelectedItem();
+                if (selectedItem != null) projectList.remove(selectedItem);
+            }
         });
 
         projectInputBox.getChildren().addAll(newProjectNameField, addProjectBtn, deleteProjectBtn);
@@ -158,9 +168,9 @@ public class App extends Application {
         VBox.setVgrow(projectListView, Priority.ALWAYS);
 
 
-        // ======================= //
-        // --- To-Do List View --- //
-        // ======================= //
+        /* ======================= */
+        /* --- To-Do List View --- */
+        /* ======================= */
         VBox todoView = new VBox(10);
         todoView.setPadding(new Insets(20));
         todoView.setStyle("-fx-background-color: #ffffff;");
@@ -198,7 +208,7 @@ public class App extends Application {
             return row;
         });
 
-        // --- COLUMNS --- //
+        /* --- COLUMNS --- */
 
         // 1. Done
         TableColumn<TodoItem, Boolean> checkCol = new TableColumn<>("Done");
@@ -277,7 +287,7 @@ public class App extends Application {
         table.getColumns().add(statusCol);
         table.getColumns().add(dateCol);
 
-        // --- Input Area (Using ComboBox for Project) --- //
+        /* --- Input Area (Using ComboBox for Project) --- */
         HBox inputBox = new HBox(10);
 
         // Input: Project Selection Dropdown
@@ -376,7 +386,7 @@ public class App extends Application {
         super.stop();
     }
 
-    // --- Data Loading --- //
+    /* --- Data Loading --- */
     private ObservableList<Project> loadProjects() {
         ObservableList<Project> list = FXCollections.observableArrayList();
         if (Files.exists(projectFilePath)) {
