@@ -1,20 +1,28 @@
-HOW TO RUN PE TOOLS
-===================
+# pe-tools
 
-1. Right-click this zip file and select "Extract All" to unzip it.
-   (The app will not work if you try to run it while it is still inside the zip).
+This project was upgraded to Java 21 (LTS).
 
-2. Open the unzipped folder "petools".
+Quick start (Windows cmd.exe):
 
-3. Open the "bin" folder.
+1. Install JDK 21 and set `JAVA_HOME`:
 
-4. Double-click the file named "petools" (or "petools.bat").
+```
+setx JAVA_HOME "C:\\path\\to\\jdk-21"
+setx PATH "%JAVA_HOME%\\bin;%PATH%"
+```
 
--------------------------------------------------------
-NOTE: WINDOWS SECURITY WARNING
-Because this is a custom-made tool and not from the Microsoft Store, Windows might try to stop it from running.
+2. Build the project:
 
-If you see a blue window saying "Windows protected your PC":
-1. Click "More info".
-2. Click "Run anyway".
--------------------------------------------------------
+```
+mvn -U clean package
+```
+
+3. Run the JavaFX app using the plugin:
+
+```
+mvn javafx:run
+```
+
+Notes:
+- The `pom.xml` has been updated to use `<java.version>21</java.version>` and JavaFX 21 with a platform classifier (default `win`). Change `<javafx.platform>` to `linux` or `mac` as needed.
+- CI is included to build on Java 21.

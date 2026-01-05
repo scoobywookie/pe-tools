@@ -33,6 +33,18 @@
         </dependency>
     </dependencies>
     <build>
+        <resources>
+            <resource>
+                <directory>src/main/resources</directory>
+            </resource>
+            <resource>
+                <directory>src/main/java</directory>
+                <includes>
+                    <include>**/*.png</include>
+                    <include>**/*.fxml</include>
+                </includes>
+            </resource>
+        </resources>
         <plugins>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
@@ -49,11 +61,15 @@
                 <executions>
                     <execution>
                         <id>default-cli</id>
-                        <configuration>
-                            <mainClass>com.petools.App</mainClass>
-                        </configuration>
                     </execution>
                 </executions>
+                <configuration>
+                    <mainClass>com.petools.App</mainClass>
+                    <launcher>petools</launcher>
+                    <jlinkImageName>petools</jlinkImageName>
+                    <noManPages>true</noManPages>
+                    <noHeaderFiles>true</noHeaderFiles>
+                </configuration>
             </plugin>
         </plugins>
     </build>

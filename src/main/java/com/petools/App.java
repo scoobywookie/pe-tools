@@ -1,6 +1,7 @@
 package com.petools;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -89,7 +90,7 @@ public class App extends Application {
             btn.setStyle(defaultButtonStyle);
         }
         sidebar.getChildren().addAll(buttons);
-        updateSelection(homeBtn); 
+        updateSelection(homeBtn);
 
         BorderPane root = new BorderPane();
         root.setCenter(homeView);
@@ -218,16 +219,31 @@ public class App extends Application {
         Separator sep2 = new Separator(Orientation.VERTICAL);
 
         // Action: FONT SIZE
-        Button minusBtn = createRibbonButton("-", () -> executeCommand("decreaseFontSize", null));
-        addCustomTooltip(minusBtn, "Decrease font size");
+        String[] fontSizes = {"10", "13", "16", "18", "24", "32", "48"};
+        int[] currentFontSizeIndex = {2}; // Default to 16px (index 2)
 
-        TextField fontSizeDisplay = new TextField("11");
+        TextField fontSizeDisplay = new TextField(fontSizes[currentFontSizeIndex[0]]);
         fontSizeDisplay.setPrefWidth(40);
         fontSizeDisplay.setAlignment(Pos.CENTER);
         fontSizeDisplay.setEditable(false);
         fontSizeDisplay.setStyle("-fx-background-color: transparent; -fx-border-color: #ccc; -fx-border-radius: 3;");
 
-        Button plusBtn = createRibbonButton("+", () -> executeCommand("increaseFontSize", null));
+        Button minusBtn = createRibbonButton("-", () -> {
+            if (currentFontSizeIndex[0] > 0) {
+                currentFontSizeIndex[0]--;
+                fontSizeDisplay.setText(fontSizes[currentFontSizeIndex[0]]);
+                executeCommand("fontSize", String.valueOf(currentFontSizeIndex[0] + 1));
+            }
+        });
+        addCustomTooltip(minusBtn, "Decrease font size");
+
+        Button plusBtn = createRibbonButton("+", () -> {
+            if (currentFontSizeIndex[0] < fontSizes.length - 1) {
+                currentFontSizeIndex[0]++;
+                fontSizeDisplay.setText(fontSizes[currentFontSizeIndex[0]]);
+                executeCommand("fontSize", String.valueOf(currentFontSizeIndex[0] + 1));
+            }
+        });
         addCustomTooltip(plusBtn, "Increase font size");
 
         Separator sep3 = new Separator(Orientation.VERTICAL);
@@ -380,7 +396,10 @@ public class App extends Application {
 
         Scene scene = new Scene(root, 1100, 700);
         stage.setTitle("PE Tools");
-        stage.getIcons().add(new Image(App.class.getResourceAsStream("/com/petools/images/pe_logo.png")));
+        InputStream iconStream = App.class.getResourceAsStream("/com/petools/images/pe_logo.png");
+        if (iconStream != null) {
+            stage.getIcons().add(new Image(iconStream));
+        }
         stage.setScene(scene);
         stage.show();
     }
