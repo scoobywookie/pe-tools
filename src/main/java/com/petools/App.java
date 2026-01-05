@@ -1,46 +1,44 @@
 package com.petools;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
 
 import javafx.application.Application;
-import javafx.beans.Observable;
-import javafx.beans.value.ChangeListener;
 import javafx.collections.FXCollections;
-import javafx.collections.ListChangeListener;
 import javafx.collections.ObservableList;
-import javafx.collections.transformation.SortedList;
 import javafx.geometry.Insets;
+import javafx.geometry.Orientation;
 import javafx.geometry.Pos;
+import javafx.print.PrinterJob;
 import javafx.scene.Scene;
 import javafx.scene.control.Button;
+import javafx.scene.control.ColorPicker;
 import javafx.scene.control.ComboBox;
-import javafx.scene.control.DatePicker;
+import javafx.scene.control.Control;
 import javafx.scene.control.Label;
 import javafx.scene.control.ListCell;
 import javafx.scene.control.ListView;
-import javafx.scene.control.TableColumn;
-import javafx.scene.control.TableRow;
-import javafx.scene.control.TableView;
+import javafx.scene.control.Separator;
 import javafx.scene.control.TextField;
-import javafx.scene.control.cell.CheckBoxTableCell;
-import javafx.scene.control.cell.ComboBoxTableCell;
-import javafx.scene.control.cell.PropertyValueFactory;
-import javafx.scene.control.cell.TextFieldTableCell;
+import javafx.scene.control.Tooltip; // Import needed for Tooltip timing
 import javafx.scene.image.Image;
 import javafx.scene.input.KeyCode;
+import javafx.scene.input.KeyEvent;
 import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.StackPane;
 import javafx.scene.layout.VBox;
+import javafx.scene.paint.Color;
+import javafx.scene.web.WebEngine;
+import javafx.scene.web.WebView;
 import javafx.stage.Stage;
-import javafx.util.StringConverter;
+import javafx.util.Duration;
 
 public class App extends Application {
 
@@ -48,12 +46,13 @@ public class App extends Application {
     private final String defaultButtonStyle = "-fx-background-color: #555555; -fx-text-fill: white;";
     private final String selectedButtonStyle = "-fx-background-color: #555555; -fx-text-fill: red;";
 
-    private ObservableList<TodoItem> todoItems;
-    private ObservableList<Project> projectList; // List of Project Objects
-    private ObservableList<String> projectNames; // Helper list for dropdowns
+    private WebView todoEditor;
+    private WebEngine webEngine;
+    private ObservableList<Project> projectList;
 
     private final Path todoFilePath = getTodoFilePath();
     private final Path projectFilePath = getProjectFilePath();
+    private boolean isEditorLoaded = false;
 
     public static void main(String[] args) {
         Application.launch(App.class, args);
@@ -61,31 +60,15 @@ public class App extends Application {
 
     @Override
     public void start(Stage stage) {
-        // 1. Load Data
         projectList = loadProjects();
-        todoItems = loadTodoItems();
-
-        // 2. Create a synchronized list of Strings for the Table ComboBoxes
-        projectNames = FXCollections.observableArrayList();
-        for (Project p : projectList) projectNames.add(p.name);
-
-        projectList.addListener((ListChangeListener<Project>) c -> {
-            while (c.next()) {
-                if (c.wasAdded()) {
-                    for (Project p : c.getAddedSubList()) projectNames.add(p.name);
-                }
-                if (c.wasRemoved()) {
-                    for (Project p : c.getRemoved()) projectNames.remove(p.name);
-                }
-            }
-        });
 
         // --- Home View ---
         Label label = new Label("Place Engineering Tools");
         label.setStyle("-fx-font-size: 24px; -fx-font-weight: bold;");
-        StackPane homeView = new StackPane(label);
+        VBox homeContent = new VBox(20, label);
+        homeContent.setAlignment(Pos.CENTER);
+        StackPane homeView = new StackPane(homeContent);
         homeView.setStyle("-fx-background-color: #f4f4f4; -fx-padding: 20;");
-        StackPane.setAlignment(label, Pos.TOP_CENTER);
 
         // --- Sidebar ---
         VBox sidebar = new VBox(10);
@@ -106,9 +89,7 @@ public class App extends Application {
             btn.setStyle(defaultButtonStyle);
         }
         sidebar.getChildren().addAll(buttons);
-
-        selectedButton = homeBtn;
-        selectedButton.setStyle(selectedButtonStyle);
+        updateSelection(homeBtn); 
 
         BorderPane root = new BorderPane();
         root.setCenter(homeView);
@@ -129,7 +110,7 @@ public class App extends Application {
             protected void updateItem(Project item, boolean empty) {
                 super.updateItem(item, empty);
                 if (empty || item == null) setText(null);
-                else setText(item.getName()); // This ensures the list view shows the name
+                else setText(item.getName());
             }
         });
 
@@ -147,15 +128,11 @@ public class App extends Application {
                 newProjectNameField.clear();
             }
         });
-
-        newProjectNameField.setOnAction(addProjectBtn.getOnAction()); // Trigger add on Enter key
-
+        newProjectNameField.setOnAction(addProjectBtn.getOnAction());
         deleteProjectBtn.setOnAction(e -> {
             Project selected = projectListView.getSelectionModel().getSelectedItem();
             if (selected != null) projectList.remove(selected);
         });
-
-        // Delete on key press
         projectListView.setOnKeyPressed(event -> {
             if (event.getCode() == KeyCode.DELETE) {
                 Project selectedItem = projectListView.getSelectionModel().getSelectedItem();
@@ -168,187 +145,234 @@ public class App extends Application {
         VBox.setVgrow(projectListView, Priority.ALWAYS);
 
 
-        /* ======================= */
-        /* --- To-Do List View --- */
-        /* ======================= */
-        VBox todoView = new VBox(10);
-        todoView.setPadding(new Insets(20));
-        todoView.setStyle("-fx-background-color: #ffffff;");
+        /* =========================================== */
+        /* --- To-Do List View (Rich Text Editor) --- */
+        /* =========================================== */
+        VBox todoView = new VBox();
+        todoView.setStyle("-fx-background-color: #F9FBFD;");
 
-        Label todoHeader = new Label("Project Task Tracker");
-        todoHeader.setStyle("-fx-font-size: 24px; -fx-font-weight: bold; -fx-text-fill: #333;");
+        // --- 1. The Ribbon ---
+        HBox ribbon = new HBox(5);
+        ribbon.setPadding(new Insets(8, 15, 8, 15));
+        ribbon.setAlignment(Pos.CENTER_LEFT);
+        ribbon.setStyle("-fx-background-color: #EDF2FA; -fx-effect: dropshadow(three-pass-box, rgba(0,0,0,0.1), 0, 0, 0, 1);");
 
-        TableView<TodoItem> table = new TableView<>();
-        table.setEditable(true);
-        table.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY_FLEX_LAST_COLUMN);
+        // Action: UNDO / REDO / PRINT
+        Button undoBtn = createRibbonButton("↶", () -> executeCommand("undo", null));
+        addCustomTooltip(undoBtn, "Undo (Ctrl+Z)");
 
-        // Delete on key press
-        table.setOnKeyPressed(event -> {
-            if (event.getCode() == KeyCode.DELETE) {
-                TodoItem selectedItem = table.getSelectionModel().getSelectedItem();
-                if (selectedItem != null) todoItems.remove(selectedItem);
+        Button redoBtn = createRibbonButton("↷", () -> executeCommand("redo", null));
+        addCustomTooltip(redoBtn, "Redo (Ctrl+Y)");
+
+        Button printBtn = createRibbonButton("🖨", () -> {
+            PrinterJob job = PrinterJob.createPrinterJob();
+            if (job != null && job.showPrintDialog(stage)) {
+                webEngine.print(job);
+                job.endJob();
             }
         });
+        addCustomTooltip(printBtn, "Print");
 
-        // Row Factory (Gray out done items)
-        table.setRowFactory(tv -> {
-            TableRow<TodoItem> row = new TableRow<>();
-            ChangeListener<Boolean> completedListener = (obs, oldVal, newVal) -> {
-                if (newVal) row.setStyle("-fx-background-color: #f0f0f0; -fx-opacity: 0.5; -fx-font-style: italic;");
-                else row.setStyle("");
-            };
-            row.itemProperty().addListener((obs, oldItem, newItem) -> {
-                if (oldItem != null) oldItem.completedProperty().removeListener(completedListener);
-                if (newItem != null) {
-                    newItem.completedProperty().addListener(completedListener);
-                    if (newItem.getCompleted()) row.setStyle("-fx-background-color: #f0f0f0; -fx-opacity: 0.5; -fx-font-style: italic;");
-                    else row.setStyle("");
-                } else row.setStyle("");
-            });
-            return row;
+        Separator sep1 = new Separator(Orientation.VERTICAL);
+
+        // Action: TEXT STYLES
+        ComboBox<String> styleCombo = new ComboBox<>(FXCollections.observableArrayList(
+                "Normal text", "Title", "Subtitle", "Heading 1", "Heading 2", "Heading 3"
+        ));
+        styleCombo.getSelectionModel().selectFirst();
+        styleCombo.setPrefWidth(120);
+        styleCombo.setStyle("-fx-background-color: transparent; -fx-border-color: transparent; -fx-font-family: 'Arial';");
+        styleCombo.setOnAction(e -> {
+            String selected = styleCombo.getValue();
+            switch (selected) {
+                case "Normal text" -> executeCommand("formatBlock", "<p>");
+                case "Title" -> executeCommand("formatBlock", "<h1>");
+                case "Subtitle" -> executeCommand("formatBlock", "<h2>");
+                case "Heading 1" -> executeCommand("formatBlock", "<h3>");
+                case "Heading 2" -> executeCommand("formatBlock", "<h4>");
+                case "Heading 3" -> executeCommand("formatBlock", "<h5>");
+            }
+            todoEditor.requestFocus();
         });
+        Tooltip styleTip = new Tooltip("Styles");
+        styleTip.setShowDelay(Duration.millis(100));
+        styleTip.setStyle("-fx-background-color: #202124; -fx-text-fill: white; -fx-font-size: 12px;");
+        styleCombo.setTooltip(styleTip);
 
-        /* --- COLUMNS --- */
+        Separator sepStyle = new Separator(Orientation.VERTICAL);
 
-        // 1. Done
-        TableColumn<TodoItem, Boolean> checkCol = new TableColumn<>("Done");
-        checkCol.setCellValueFactory(new PropertyValueFactory<>("completed"));
-        checkCol.setCellFactory(CheckBoxTableCell.forTableColumn(checkCol));
-        checkCol.setMaxWidth(50);
-        checkCol.setSortType(TableColumn.SortType.ASCENDING); // Default sort
+        // Action: FONT FAMILY
+        ComboBox<String> fontCombo = new ComboBox<>(FXCollections.observableArrayList(
+                "Arial", "Courier New", "Georgia", "Times New Roman", "Verdana", "Comic Sans MS"
+        ));
+        fontCombo.getSelectionModel().select("Arial");
+        fontCombo.setStyle("-fx-background-color: transparent;");
+        fontCombo.setPrefWidth(110);
+        fontCombo.setOnAction(e -> executeCommand("fontName", fontCombo.getValue()));
 
-        // Bind the SortedList comparator to the TableView comparator.
-        SortedList<TodoItem> sortedData = new SortedList<>(todoItems);
-        sortedData.comparatorProperty().bind(table.comparatorProperty());
-        table.setItems(sortedData);
-        table.getSortOrder().add(checkCol); // Apply default sort
+        Tooltip fontTip = new Tooltip("Font");
+        fontTip.setShowDelay(Duration.millis(100));
+        fontTip.setStyle("-fx-background-color: #202124; -fx-text-fill: white; -fx-font-size: 12px;");
+        fontCombo.setTooltip(fontTip);
 
-        // 2. Project Column
-        // NOTE: We name this "Project". If it showed "Class Name" before, this fixes it.
-        TableColumn<TodoItem, String> projectCol = new TableColumn<>("Project"); 
-        projectCol.setCellValueFactory(new PropertyValueFactory<>("projectName"));
-        // This uses the list of Strings (projectNames), so it will definitely display text.
-        projectCol.setCellFactory(ComboBoxTableCell.forTableColumn(projectNames));
-        projectCol.setOnEditCommit(e -> e.getRowValue().setProjectName(e.getNewValue()));
+        Separator sep2 = new Separator(Orientation.VERTICAL);
 
-        // 3. Description
-        TableColumn<TodoItem, String> descCol = new TableColumn<>("Description");
-        descCol.setCellValueFactory(new PropertyValueFactory<>("description"));
-        descCol.setCellFactory(TextFieldTableCell.forTableColumn());
-        descCol.setOnEditCommit(e -> e.getRowValue().setDescription(e.getNewValue()));
+        // Action: FONT SIZE
+        Button minusBtn = createRibbonButton("-", () -> executeCommand("decreaseFontSize", null));
+        addCustomTooltip(minusBtn, "Decrease font size");
 
-        // 4. Priority
-        TableColumn<TodoItem, String> priorityCol = new TableColumn<>("Priority");
-        priorityCol.setCellValueFactory(new PropertyValueFactory<>("priority"));
-        priorityCol.setCellFactory(tc -> new ComboBoxTableCell<TodoItem, String>("High", "Medium", "Low") {
-            @Override
-            public void updateItem(String item, boolean empty) {
-                super.updateItem(item, empty);
-                if (item == null || empty) { setStyle(""); setText(null); } 
-                else {
-                    if (item.equalsIgnoreCase("High")) setStyle("-fx-background-color: #ffcccc; -fx-text-fill: #cc0000; -fx-alignment: CENTER;");
-                    else if (item.equalsIgnoreCase("Medium")) setStyle("-fx-background-color: #fff4cc; -fx-text-fill: #b38600; -fx-alignment: CENTER;");
-                    else if (item.equalsIgnoreCase("Low")) setStyle("-fx-background-color: #ccffcc; -fx-text-fill: #006600; -fx-alignment: CENTER;");
-                    else setStyle("-fx-alignment: CENTER;");
+        TextField fontSizeDisplay = new TextField("11");
+        fontSizeDisplay.setPrefWidth(40);
+        fontSizeDisplay.setAlignment(Pos.CENTER);
+        fontSizeDisplay.setEditable(false);
+        fontSizeDisplay.setStyle("-fx-background-color: transparent; -fx-border-color: #ccc; -fx-border-radius: 3;");
+
+        Button plusBtn = createRibbonButton("+", () -> executeCommand("increaseFontSize", null));
+        addCustomTooltip(plusBtn, "Increase font size");
+
+        Separator sep3 = new Separator(Orientation.VERTICAL);
+
+        // Action: FORMATTING
+        Button boldBtn = createRibbonButton("B", () -> executeCommand("bold", null));
+        boldBtn.setStyle("-fx-font-weight: bold; -fx-background-color: transparent;");
+        addCustomTooltip(boldBtn, "Bold (Ctrl+B)");
+
+        Button italicBtn = createRibbonButton("I", () -> executeCommand("italic", null));
+        italicBtn.setStyle("-fx-font-style: italic; -fx-font-family: serif; -fx-background-color: transparent;");
+        addCustomTooltip(italicBtn, "Italic (Ctrl+I)");
+
+        Button underlineBtn = createRibbonButton("U", () -> executeCommand("underline", null));
+        underlineBtn.setStyle("-fx-underline: true; -fx-background-color: transparent;");
+        addCustomTooltip(underlineBtn, "Underline (Ctrl+U)");
+
+        ColorPicker colorPicker = new ColorPicker(Color.BLACK);
+        colorPicker.setStyle("-fx-color-label-visible: false; -fx-background-color: transparent; -fx-pref-width: 40px;");
+        colorPicker.setOnAction(e -> {
+            String hex = toHexString(colorPicker.getValue());
+            executeCommand("foreColor", hex);
+        });
+        Tooltip colorTip = new Tooltip("Text color");
+        colorTip.setShowDelay(Duration.millis(100));
+        colorTip.setStyle("-fx-background-color: #202124; -fx-text-fill: white; -fx-font-size: 12px;");
+        colorPicker.setTooltip(colorTip);
+
+        Separator sep4 = new Separator(Orientation.VERTICAL);
+
+        // Alignment
+        Button alignLeft = createRibbonButton("≡", () -> executeCommand("justifyLeft", null));
+        addCustomTooltip(alignLeft, "Left align (Ctrl+Shift+L)");
+
+        Button alignCenter = createRibbonButton("≚", () -> executeCommand("justifyCenter", null));
+        addCustomTooltip(alignCenter, "Center align (Ctrl+Shift+E)");
+
+        Button alignRight = createRibbonButton("≣", () -> executeCommand("justifyRight", null));
+        addCustomTooltip(alignRight, "Right align (Ctrl+Shift+R)");
+
+        Separator sep5 = new Separator(Orientation.VERTICAL);
+
+        // Lists
+        Button bulletListBtn = createRibbonButton("•≣", () -> executeCommand("insertUnorderedList", null));
+        addCustomTooltip(bulletListBtn, "Bulleted list (Ctrl+Shift+8)");
+
+        Button numListBtn = createRibbonButton("1.≣", () -> executeCommand("insertOrderedList", null));
+        addCustomTooltip(numListBtn, "Numbered list (Ctrl+Shift+7)");
+
+        Separator sep6 = new Separator(Orientation.VERTICAL);
+
+        // Indentation
+        Button indentLessBtn = createRibbonButton("⇠", () -> executeCommand("outdent", null));
+        addCustomTooltip(indentLessBtn, "Decrease indent (Shift+Tab)");
+
+        Button indentMoreBtn = createRibbonButton("⇢", () -> executeCommand("indent", null));
+        addCustomTooltip(indentMoreBtn, "Increase indent (Tab)");
+
+        Separator sep7 = new Separator(Orientation.VERTICAL);
+
+        // Clear Formatting
+        Button clearFormatBtn = createRibbonButton("Tₓ", () -> executeCommand("removeFormat", null));
+        addCustomTooltip(clearFormatBtn, "Clear formatting (Ctrl+\\)");
+
+
+        ribbon.getChildren().addAll(
+            undoBtn, redoBtn, printBtn, sep1,
+            styleCombo, sepStyle,
+            fontCombo, sep2,
+            minusBtn, fontSizeDisplay, plusBtn, sep3,
+            boldBtn, italicBtn, underlineBtn, colorPicker, sep4,
+            alignLeft, alignCenter, alignRight, sep5,
+            bulletListBtn, numListBtn, sep6,
+            indentLessBtn, indentMoreBtn, sep7,
+            clearFormatBtn
+        );
+
+        // --- 2. The Editor Page (WebView) ---
+        todoEditor = new WebView();
+        webEngine = todoEditor.getEngine();
+
+        // ** KEYBOARD HANDLER **
+        todoEditor.addEventFilter(KeyEvent.KEY_PRESSED, event -> {
+            if (event.getCode() == KeyCode.TAB) {
+                if (event.isShiftDown()) {
+                    executeCommand("outdent", null);
+                } else {
+                    executeCommand("indent", null);
                 }
+                event.consume();
+                return;
             }
-        });
-        priorityCol.setOnEditCommit(e -> e.getRowValue().setPriority(e.getNewValue()));
 
-        // 5. Status
-        TableColumn<TodoItem, String> statusCol = new TableColumn<>("Status");
-        statusCol.setCellValueFactory(new PropertyValueFactory<>("status"));
-        statusCol.setCellFactory(tc -> new ComboBoxTableCell<TodoItem, String>("Not Started", "In Progress", "On Hold", "Passed", "Done") {
-            @Override
-            public void updateItem(String item, boolean empty) {
-                super.updateItem(item, empty);
-                if (item == null || empty) { setStyle(""); setText(null); } 
-                else {
-                    if (item.equalsIgnoreCase("In Progress")) setStyle("-fx-background-color: #e6f7ff; -fx-text-fill: #0066cc; -fx-alignment: CENTER;");
-                    else if (item.equalsIgnoreCase("Passed") || item.equalsIgnoreCase("Done")) setStyle("-fx-background-color: #ccffcc; -fx-text-fill: #006600; -fx-alignment: CENTER;");
-                    else if (item.equalsIgnoreCase("Not Started")) setStyle("-fx-background-color: #f2f2f2; -fx-text-fill: #666666; -fx-alignment: CENTER;");
-                    else if (item.equalsIgnoreCase("On Hold")) setStyle("-fx-background-color: #e6f2ff; -fx-text-fill: #0059b3; -fx-alignment: CENTER;");
-                    else setStyle("-fx-alignment: CENTER;");
+            if (event.isShortcutDown()) {
+                KeyCode code = event.getCode();
+                if (code == KeyCode.B) { executeCommand("bold", null); event.consume(); }
+                else if (code == KeyCode.I) { executeCommand("italic", null); event.consume(); }
+                else if (code == KeyCode.U) { executeCommand("underline", null); event.consume(); }
+                else if (code == KeyCode.BACK_SLASH) { executeCommand("removeFormat", null); event.consume(); }
+                else if (code == KeyCode.Z) {
+                    if (event.isShiftDown()) executeCommand("redo", null);
+                    else executeCommand("undo", null);
+                    event.consume();
                 }
-            }
-        });
-        statusCol.setOnEditCommit(e -> e.getRowValue().setStatus(e.getNewValue()));
-
-        // 6. Date
-        TableColumn<TodoItem, String> dateCol = new TableColumn<>("Date");
-        dateCol.setCellValueFactory(new PropertyValueFactory<>("date"));
-        dateCol.setCellFactory(col -> new DateEditingCell());
-        dateCol.setOnEditCommit(e -> e.getRowValue().setDate(e.getNewValue()));
-
-        table.getColumns().add(checkCol);
-        table.getColumns().add(projectCol);
-        table.getColumns().add(descCol);
-        table.getColumns().add(priorityCol);
-        table.getColumns().add(statusCol);
-        table.getColumns().add(dateCol);
-
-        /* --- Input Area (Using ComboBox for Project) --- */
-        HBox inputBox = new HBox(10);
-
-        // Input: Project Selection Dropdown
-        ComboBox<Project> projectInput = new ComboBox<>(projectList);
-        projectInput.setPromptText("Select Project");
-        projectInput.setPrefWidth(150);
-
-        // Force the ComboBox to display the NAME, not the object code
-        projectInput.setConverter(new StringConverter<Project>() {
-            @Override
-            public String toString(Project project) {
-                if (project == null) return null;
-                return project.getName();
-            }
-            @Override
-            public Project fromString(String string) {
-                return null; // No need to convert back from string for a dropdown selection
+                else if (code == KeyCode.Y) { executeCommand("redo", null); event.consume(); }
+                else if (code == KeyCode.DIGIT8 && event.isShiftDown()) { executeCommand("insertUnorderedList", null); event.consume(); }
+                else if (code == KeyCode.DIGIT7 && event.isShiftDown()) { executeCommand("insertOrderedList", null); event.consume(); }
+                else if (code == KeyCode.L && event.isShiftDown()) { executeCommand("justifyLeft", null); event.consume(); }
+                else if (code == KeyCode.E && event.isShiftDown()) { executeCommand("justifyCenter", null); event.consume(); }
+                else if (code == KeyCode.R && event.isShiftDown()) { executeCommand("justifyRight", null); event.consume(); }
             }
         });
 
-        TextField descInput = new TextField(); descInput.setPromptText("Description");
-        ComboBox<String> priInput = new ComboBox<>(); priInput.getItems().addAll("High", "Medium", "Low"); priInput.setPromptText("Priority");
-        ComboBox<String> statInput = new ComboBox<>(); statInput.getItems().addAll("Not Started", "In Progress", "On Hold", "Passed"); statInput.setPromptText("Status");
-        DatePicker dateInput = new DatePicker(); dateInput.setPromptText("Date");
+        String initialContent = loadTodoHtml();
+        webEngine.loadContent(initialContent);
 
-        Button addBtn = new Button("Add Task");
-        Button deleteBtn = new Button("Delete Selected");
-
-        inputBox.getChildren().addAll(projectInput, descInput, priInput, statInput, dateInput, addBtn, deleteBtn);
-
-        addBtn.setOnAction(e -> {
-            String projName = (projectInput.getValue() != null) ? projectInput.getValue().name : "General";
-            String dateStr = (dateInput.getValue() != null) ? dateInput.getValue().format(DateTimeFormatter.ofPattern("dd-MMM-yy")) : "TBD";
-
-            todoItems.add(new TodoItem(
-                false,
-                projName,
-                descInput.getText().isEmpty() ? "Task" : descInput.getText(),
-                priInput.getValue() == null ? "Low" : priInput.getValue(),
-                statInput.getValue() == null ? "Not Started" : statInput.getValue(),
-                dateStr
-            ));
-            descInput.clear(); dateInput.setValue(null);
+        webEngine.getLoadWorker().stateProperty().addListener((obs, oldState, newState) -> {
+            if (newState == javafx.concurrent.Worker.State.SUCCEEDED) {
+                isEditorLoaded = true;
+                webEngine.executeScript("document.body.contentEditable = true;");
+                webEngine.executeScript("document.body.style.fontFamily = 'Arial';");
+                webEngine.executeScript("document.body.style.fontSize = '14px';");
+                webEngine.executeScript("document.body.style.margin = '0px';");
+            }
         });
 
-        deleteBtn.setOnAction(e -> {
-            TodoItem selected = table.getSelectionModel().getSelectedItem();
-            if (selected != null) todoItems.remove(selected);
-        });
+        VBox pageSheet = new VBox(todoEditor);
+        pageSheet.setMaxWidth(850);
+        pageSheet.setPadding(new Insets(0));
+        pageSheet.setStyle("-fx-background-color: white; -fx-effect: dropshadow(three-pass-box, rgba(0,0,0,0.2), 10, 0, 0, 0);");
+        VBox.setVgrow(todoEditor, Priority.ALWAYS);
 
-        todoView.getChildren().addAll(todoHeader, inputBox, table);
-        VBox.setVgrow(table, Priority.ALWAYS);
+        StackPane editorWorkspace = new StackPane(pageSheet);
+        editorWorkspace.setStyle("-fx-background-color: #F0F0F0;");
+        editorWorkspace.setPadding(new Insets(30));
 
-        // Navigation
+        todoView.getChildren().addAll(ribbon, editorWorkspace);
+        VBox.setVgrow(editorWorkspace, Priority.ALWAYS);
+
+
+        // --- Navigation Logic ---
         homeBtn.setOnAction(e -> { label.setText("Place Engineering Tools"); updateSelection(homeBtn); root.setCenter(homeView); });
         dashboardBtn.setOnAction(e -> { label.setText("Dashboard View"); updateSelection(dashboardBtn); root.setCenter(homeView); });
         todoBtn.setOnAction(e -> { updateSelection(todoBtn); root.setCenter(todoView); });
-
-        // Point to Project View
         projectDataBtn.setOnAction(e -> { updateSelection(projectDataBtn); root.setCenter(projectView); });
-
         cadToolsBtn.setOnAction(e -> { label.setText("AutoCAD Automation Dashboard"); updateSelection(cadToolsBtn); root.setCenter(homeView); });
         siteLocatorBtn.setOnAction(e -> { label.setText("Engineering Site Locator"); updateSelection(siteLocatorBtn); root.setCenter(homeView); });
         webMngmntBtn.setOnAction(e -> { label.setText("Website - Project Map Management"); updateSelection(webMngmntBtn); root.setCenter(homeView); });
@@ -356,9 +380,52 @@ public class App extends Application {
 
         Scene scene = new Scene(root, 1100, 700);
         stage.setTitle("PE Tools");
-        try { stage.getIcons().add(new Image(App.class.getResourceAsStream("/com/petools/images/pe_logo.png"))); } catch (Exception e) { }
+        stage.getIcons().add(new Image(App.class.getResourceAsStream("/com/petools/images/pe_logo.png")));
         stage.setScene(scene);
         stage.show();
+    }
+
+    // Helper: Add styled tooltip with fast delay
+    private void addCustomTooltip(Control control, String text) {
+        Tooltip t = new Tooltip(text);
+        // Make it appear fast (100ms) instead of the default 1 second
+        t.setShowDelay(Duration.millis(100));
+        // Style it to look like Google Docs (Dark background, white text)
+        t.setStyle("-fx-background-color: #202124; -fx-text-fill: white; -fx-font-size: 12px; -fx-padding: 6px;");
+        control.setTooltip(t);
+    }
+
+    private void executeCommand(String command, String value) {
+        if (webEngine != null) {
+            if (value == null) {
+                webEngine.executeScript("document.execCommand('" + command + "', false, null)");
+            } else {
+                webEngine.executeScript("document.execCommand('" + command + "', false, '" + value + "')");
+            }
+        }
+    }
+
+    private String toHexString(Color color) {
+        return String.format("#%02X%02X%02X",
+            (int) (color.getRed() * 255),
+            (int) (color.getGreen() * 255),
+            (int) (color.getBlue() * 255));
+    }
+
+    private Button createRibbonButton(String text, Runnable action) {
+        Button btn = new Button(text);
+        btn.setStyle("-fx-background-color: transparent; -fx-text-fill: #333; -fx-font-size: 14px; -fx-cursor: hand;");
+        btn.setOnAction(e -> action.run());
+        btn.setOnMouseEntered(e -> btn.setStyle("-fx-background-color: #E1E5F2; -fx-text-fill: #000; -fx-background-radius: 4px; -fx-font-size: 14px;"));
+        btn.setOnMouseExited(e -> {
+            switch (text) {
+                case "B" -> btn.setStyle("-fx-font-weight: bold; -fx-background-color: transparent;");
+                case "I" -> btn.setStyle("-fx-font-style: italic; -fx-font-family: serif; -fx-background-color: transparent;");
+                case "U" -> btn.setStyle("-fx-underline: true; -fx-background-color: transparent;");
+                default -> btn.setStyle("-fx-background-color: transparent; -fx-text-fill: #333; -fx-font-size: 14px;");
+            }
+        });
+        return btn;
     }
 
     private void updateSelection(Button newSelected) {
@@ -369,24 +436,21 @@ public class App extends Application {
 
     private Path getTodoFilePath() {
         String userHome = System.getProperty("user.home");
-        Path appDataDir = Paths.get(userHome, ".petools");
-        return appDataDir.resolve("todos_v2.csv");
+        return Paths.get(userHome, ".petools", "todos.html"); 
     }
 
     private Path getProjectFilePath() {
         String userHome = System.getProperty("user.home");
-        Path appDataDir = Paths.get(userHome, ".petools");
-        return appDataDir.resolve("projects.txt");
+        return Paths.get(userHome, ".petools", "projects.txt");
     }
 
     @Override
     public void stop() throws Exception {
-        saveTodoItems();
+        saveTodoHtml();
         saveProjects();
         super.stop();
     }
 
-    /* --- Data Loading --- */
     private ObservableList<Project> loadProjects() {
         ObservableList<Project> list = FXCollections.observableArrayList();
         if (Files.exists(projectFilePath)) {
@@ -395,14 +459,11 @@ public class App extends Application {
                 for(String line : lines) {
                     if(!line.trim().isEmpty()) list.add(new Project(line.trim()));
                 }
-            } catch (IOException e) {
-                System.err.println("Error loading projects: " + e.getMessage());
-            }
+            } catch (IOException e) { System.err.println("Error loading projects"); }
         }
         if(list.isEmpty()) {
             list.add(new Project("Site A - Grading"));
             list.add(new Project("Bridge Analysis"));
-            list.add(new Project("Hwy 101 Expansion"));
         }
         return list;
     }
@@ -411,55 +472,29 @@ public class App extends Application {
         try {
             Files.createDirectories(projectFilePath.getParent());
             List<String> lines = new ArrayList<>();
-            for(Project p : projectList) lines.add(p.name);
+            for(Project p : projectList) lines.add(p.getName());
             Files.write(projectFilePath, lines);
-        } catch(IOException e) { System.err.println("Error saving projects: " + e.getMessage()); }
+        } catch(IOException e) { System.err.println("Error saving projects"); }
     }
 
-    private ObservableList<TodoItem> loadTodoItems() {
-        ObservableList<TodoItem> items = FXCollections.observableArrayList(item ->
-            new Observable[]{item.completedProperty()});
-
+    private String loadTodoHtml() {
         if (Files.exists(todoFilePath)) {
             try {
-                List<String> lines = Files.readAllLines(todoFilePath);
-                for (String line : lines) {
-                    String[] parts = line.split(";", -1);
-                    if (parts.length >= 6) {
-                        items.add(new TodoItem(
-                            Boolean.parseBoolean(parts[0]),
-                            parts[1], parts[2], parts[3], parts[4], parts[5]
-                        ));
-                    }
-                }
-            } catch (IOException e) {
-                System.err.println("Error loading: " + e.getMessage());
-            }
-        } else {
-            items.add(new TodoItem(false, "Site A - Grading", "Review Topo Survey", "High", "In Progress", "01-Nov-25"));
-            items.add(new TodoItem(false, "Bridge Analysis", "Check Load Factors", "Medium", "Not Started", "05-Nov-25"));
+                return new String(Files.readAllBytes(todoFilePath), StandardCharsets.UTF_8);
+            } catch (IOException e) { System.err.println("Error loading html"); }
         }
-        return items;
+        return "<html><body contenteditable='true' style='font-family: Arial; font-size: 14px;'>Type your notes here...</body></html>";
     }
 
-    private void saveTodoItems() {
-        try {
-            Files.createDirectories(todoFilePath.getParent());
-            List<String> lines = new ArrayList<>();
-            for (TodoItem item : todoItems) {
-                String line = String.join(";",
-                    String.valueOf(item.getCompleted()),
-                    item.getProjectName(),
-                    item.getDescription(),
-                    item.getPriority(),
-                    item.getStatus(),
-                    item.getDate()
-                );
-                lines.add(line);
+    private void saveTodoHtml() {
+        if (isEditorLoaded && webEngine != null) {
+            String htmlContent = (String) webEngine.executeScript("document.documentElement.outerHTML");
+            try {
+                Files.createDirectories(todoFilePath.getParent());
+                Files.write(todoFilePath, htmlContent.getBytes(StandardCharsets.UTF_8));
+            } catch (IOException e) {
+                System.err.println("Error saving html notes: " + e.getMessage());
             }
-            Files.write(todoFilePath, lines);
-        } catch (IOException e) {
-            System.err.println("Error saving: " + e.getMessage());
         }
     }
 }
