@@ -394,7 +394,7 @@ public class App extends Application {
         webMngmntBtn.setOnAction(e -> { label.setText("Website - Project Map Management"); updateSelection(webMngmntBtn); root.setCenter(homeView); });
         settingsBtn.setOnAction(e -> { label.setText("Settings"); updateSelection(settingsBtn); root.setCenter(homeView); });
 
-        Scene scene = new Scene(root, 1100, 700);
+        Scene scene = new Scene(root, 875, 525);
         stage.setTitle("PE Tools");
         InputStream iconStream = App.class.getResourceAsStream("/com/petools/images/pe_logo.png");
         if (iconStream != null) {
