@@ -1,4 +1,4 @@
-package com.petools;
+package com.petools.features.projects;
 
 public class Project {
     public String name;
