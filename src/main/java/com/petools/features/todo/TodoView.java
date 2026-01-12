@@ -2,21 +2,36 @@ package com.petools.features.todo;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.time.DayOfWeek;
+import java.time.LocalDate;
+import java.time.format.DateTimeFormatter;
+import java.time.temporal.TemporalAdjusters;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+import java.util.Optional;
 
 import javafx.collections.FXCollections;
 import javafx.geometry.Insets;
 import javafx.geometry.Orientation;
 import javafx.geometry.Pos;
 import javafx.print.PrinterJob;
+import javafx.scene.control.Alert;
 import javafx.scene.control.Button;
 import javafx.scene.control.ColorPicker;
 import javafx.scene.control.ComboBox;
+import javafx.scene.control.ContextMenu;
 import javafx.scene.control.Control;
+import javafx.scene.control.MenuItem;
 import javafx.scene.control.Separator;
+import javafx.scene.control.Tab;
+import javafx.scene.control.TabPane;
 import javafx.scene.control.TextField;
+import javafx.scene.control.TextInputDialog;
 import javafx.scene.control.Tooltip;
 import javafx.scene.input.KeyCode;
 import javafx.scene.input.KeyEvent;
@@ -31,144 +46,280 @@ import javafx.util.Duration;
 
 public class TodoView extends VBox {
 
-    private WebView todoEditor;
-    private WebEngine webEngine;
-    private boolean isEditorLoaded = false;
-    private final Path todoFilePath = getTodoFilePath();
+    private final TabPane tabPane;
+    private WebEngine activeEngine;
+    private final Path todoDir = Paths.get(System.getProperty("user.home"), ".petools", "todos");
+
+    // Constant for the base A4-ish width
+    private static final double BASE_PAGE_WIDTH = 850.0;
 
     public TodoView() {
-        // Matches "todoView.setStyle" from App.java
         this.setStyle("-fx-background-color: #F9FBFD;");
 
-        // --- 1. The Ribbon ---
+        HBox ribbon = createRibbon();
+
+        tabPane = new TabPane();
+        tabPane.setStyle("-fx-background-color: #F0F0F0; -fx-tab-min-width: 120px;");
+        VBox.setVgrow(tabPane, Priority.ALWAYS);
+
+        tabPane.getSelectionModel().selectedItemProperty().addListener((obs, oldTab, newTab) -> {
+            if (newTab != null) {
+                WebView view = getWebViewFromTab(newTab);
+                if (view != null) {
+                    activeEngine = view.getEngine();
+                    view.requestFocus();
+                }
+            }
+        });
+
+        initializeTabs();
+
+        this.getChildren().addAll(ribbon, tabPane);
+    }
+
+    private void initializeTabs() {
+        try {
+            if (!Files.exists(todoDir)) Files.createDirectories(todoDir);
+
+            LocalDate today = LocalDate.now();
+            LocalDate thisMonday = today.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY));
+            String mondayName = "Week_" + thisMonday.format(DateTimeFormatter.ISO_LOCAL_DATE) + ".html";
+            Path currentWeekFile = todoDir.resolve(mondayName);
+
+            if (!Files.exists(currentWeekFile)) {
+                createEmptyFile(currentWeekFile, "Week of " + thisMonday.format(DateTimeFormatter.ISO_LOCAL_DATE));
+            }
+
+            List<Path> allFiles = new ArrayList<>();
+            try (DirectoryStream<Path> stream = Files.newDirectoryStream(todoDir, "*.html")) {
+                for (Path entry : stream) allFiles.add(entry);
+            }
+            allFiles.sort(Collections.reverseOrder());
+
+            for (Path file : allFiles) {
+                addTab(file);
+            }
+
+            if (!tabPane.getTabs().isEmpty()) {
+                tabPane.getSelectionModel().select(0);
+            }
+
+        } catch (IOException e) {}
+    }
+
+    private void addTab(Path filePath) {
+        String filename = filePath.getFileName().toString().replace(".html", "");
+        String displayName = filename.startsWith("Week_") ? "Week of " + filename.replace("Week_", "") : filename;
+
+        Tab tab = new Tab(displayName);
+        tab.setUserData(filePath);
+
+        ContextMenu contextMenu = new ContextMenu();
+        MenuItem renameItem = new MenuItem("Rename Tab");
+        renameItem.setOnAction(e -> handleRename(tab));
+        contextMenu.getItems().add(renameItem);
+        tab.setContextMenu(contextMenu);
+
+        WebView editor = new WebView();
+        WebEngine engine = editor.getEngine();
+        engine.loadContent(loadFileContent(filePath));
+
+        engine.getLoadWorker().stateProperty().addListener((obs, oldState, newState) -> {
+            if (newState == javafx.concurrent.Worker.State.SUCCEEDED) {
+                engine.executeScript("document.body.contentEditable = true;");
+                engine.executeScript("document.body.style.fontFamily = 'Arial';");
+                engine.executeScript("document.body.style.fontSize = '14px';");
+                engine.executeScript("document.body.style.margin = '0px';");
+            }
+        });
+
+        setupKeyboardShortcuts(editor, engine);
+
+        VBox pageSheet = new VBox(editor);
+        pageSheet.setMaxWidth(BASE_PAGE_WIDTH);
+        pageSheet.setPadding(new Insets(0));
+        pageSheet.setStyle("-fx-background-color: white; -fx-effect: dropshadow(three-pass-box, rgba(0,0,0,0.2), 10, 0, 0, 0);");
+        VBox.setVgrow(editor, Priority.ALWAYS);
+
+        StackPane workspace = new StackPane(pageSheet);
+        workspace.setStyle("-fx-background-color: #F0F0F0;");
+        workspace.setPadding(new Insets(30));
+
+        tab.setContent(workspace);
+        tabPane.getTabs().add(tab);
+
+        tabPane.getSelectionModel().select(tab);
+    }
+
+    private void handleNewTab() {
+        TextInputDialog dialog = new TextInputDialog("New Notes");
+        dialog.setTitle("New Tab");
+        dialog.setHeaderText("Create a new document");
+        dialog.setContentText("Enter name:");
+
+        Optional<String> result = dialog.showAndWait();
+        result.ifPresent(name -> {
+            String safeName = name.trim().replaceAll("[^a-zA-Z0-9 _-]", ""); 
+            if (safeName.isEmpty()) safeName = "Untitled";
+
+            Path newPath = todoDir.resolve(safeName + ".html");
+
+            if (Files.exists(newPath)) {
+                Alert alert = new Alert(Alert.AlertType.ERROR, "A file with this name already exists.");
+                alert.showAndWait();
+                return;
+            }
+
+            try {
+                createEmptyFile(newPath, safeName);
+                addTab(newPath);
+            } catch (IOException e) {
+            }
+        });
+    }
+
+    private void handleRename(Tab tab) {
+        TextInputDialog dialog = new TextInputDialog(tab.getText());
+        dialog.setTitle("Rename Tab");
+        dialog.setHeaderText("Rename '" + tab.getText() + "'");
+        dialog.setContentText("New name:");
+
+        Optional<String> result = dialog.showAndWait();
+        result.ifPresent(name -> {
+            String safeName = name.trim().replaceAll("[^a-zA-Z0-9 _-]", "");
+            if (safeName.isEmpty()) return;
+
+            Path oldPath = (Path) tab.getUserData();
+            Path newPath = todoDir.resolve(safeName + ".html");
+
+            if (Files.exists(newPath)) {
+                Alert alert = new Alert(Alert.AlertType.ERROR, "A file with this name already exists.");
+                alert.showAndWait();
+                return;
+            }
+
+            try {
+                saveTab(tab);
+                Files.move(oldPath, newPath);
+                tab.setText(safeName);
+                tab.setUserData(newPath);
+            } catch (IOException e) {
+                Alert alert = new Alert(Alert.AlertType.ERROR, "Could not rename file.");
+                alert.showAndWait();
+            }
+        });
+    }
+
+    public void save() {
+        for (Tab tab : tabPane.getTabs()) {
+            saveTab(tab);
+        }
+    }
+
+    private void saveTab(Tab tab) {
+        WebView view = getWebViewFromTab(tab);
+        Path path = (Path) tab.getUserData();
+        if (view != null && path != null) {
+            try {
+                String html = (String) view.getEngine().executeScript("document.documentElement.outerHTML");
+                Files.write(path, html.getBytes(StandardCharsets.UTF_8));
+            } catch (IOException e) { System.err.println("Error saving tab: " + path); }
+        }
+    }
+
+    private HBox createRibbon() {
         HBox ribbon = new HBox(5);
         ribbon.setPadding(new Insets(8, 15, 8, 15));
         ribbon.setAlignment(Pos.CENTER_LEFT);
         ribbon.setStyle("-fx-background-color: #EDF2FA; -fx-effect: dropshadow(three-pass-box, rgba(0,0,0,0.1), 0, 0, 0, 1);");
 
-        // --- Actions: UNDO / REDO / PRINT ---
-        Button undoBtn = createRibbonButton("↶", () -> executeCommand("undo", null));
+        Button newTabBtn = createRibbonButton("+ New Tab", this::handleNewTab);
+        newTabBtn.setStyle("-fx-background-color: #4CAF50; -fx-text-fill: white; -fx-font-weight: bold; -fx-background-radius: 4;");
+        addCustomTooltip(newTabBtn, "Create a new document");
+
+        Separator sep0 = new Separator(Orientation.VERTICAL);
+
+        Button undoBtn = createRibbonButton("↶", () -> executeCommand(activeEngine, "undo", null));
         addCustomTooltip(undoBtn, "Undo (Ctrl+Z)");
 
-        Button redoBtn = createRibbonButton("↷", () -> executeCommand("redo", null));
+        Button redoBtn = createRibbonButton("↷", () -> executeCommand(activeEngine, "redo", null));
         addCustomTooltip(redoBtn, "Redo (Ctrl+Y)");
 
         Button printBtn = createRibbonButton("🖨", () -> {
-            PrinterJob job = PrinterJob.createPrinterJob();
-            if (job != null && job.showPrintDialog(getScene().getWindow())) {
-                webEngine.print(job);
-                job.endJob();
+            if (activeEngine != null) {
+                PrinterJob job = PrinterJob.createPrinterJob();
+                if (job != null && job.showPrintDialog(getScene().getWindow())) {
+                    activeEngine.print(job);
+                    job.endJob();
+                }
             }
         });
         addCustomTooltip(printBtn, "Print");
 
         Separator sep1 = new Separator(Orientation.VERTICAL);
 
-        // --- Styles Combo ---
-        ComboBox<String> styleCombo = new ComboBox<>(FXCollections.observableArrayList(
-                "Normal text", "Title", "Subtitle", "Heading 1", "Heading 2", "Heading 3"
-        ));
+        ComboBox<String> styleCombo = new ComboBox<>(FXCollections.observableArrayList("Normal text", "Title", "Subtitle", "Heading 1", "Heading 2", "Heading 3"));
         styleCombo.getSelectionModel().selectFirst();
         styleCombo.setPrefWidth(120);
         styleCombo.setStyle("-fx-background-color: transparent; -fx-border-color: transparent; -fx-font-family: 'Arial';");
         styleCombo.setOnAction(e -> {
-            String selected = styleCombo.getValue();
-            switch (selected) {
-                case "Normal text" -> executeCommand("formatBlock", "<p>");
-                case "Title" -> executeCommand("formatBlock", "<h1>");
-                case "Subtitle" -> executeCommand("formatBlock", "<h2>");
-                case "Heading 1" -> executeCommand("formatBlock", "<h3>");
-                case "Heading 2" -> executeCommand("formatBlock", "<h4>");
-                case "Heading 3" -> executeCommand("formatBlock", "<h5>");
-            }
-            todoEditor.requestFocus();
+            String val = styleCombo.getValue();
+            String tag = val.equals("Normal text") ? "<p>" : val.equals("Title") ? "<h1>" : val.equals("Subtitle") ? "<h2>" : val.equals("Heading 1") ? "<h3>" : val.equals("Heading 2") ? "<h4>" : "<h5>";
+            executeCommand(activeEngine, "formatBlock", tag);
         });
-        addCustomTooltip(styleCombo, "Styles");
 
         Separator sepStyle = new Separator(Orientation.VERTICAL);
 
-        // --- Font Family ---
-        ComboBox<String> fontCombo = new ComboBox<>(FXCollections.observableArrayList(
-                "Arial", "Courier New", "Georgia", "Times New Roman", "Verdana", "Comic Sans MS"
-        ));
+        ComboBox<String> fontCombo = new ComboBox<>(FXCollections.observableArrayList("Arial", "Courier New", "Georgia", "Times New Roman", "Verdana", "Comic Sans MS"));
         fontCombo.getSelectionModel().select("Arial");
         fontCombo.setStyle("-fx-background-color: transparent;");
         fontCombo.setPrefWidth(110);
-        fontCombo.setOnAction(e -> executeCommand("fontName", fontCombo.getValue()));
-        addCustomTooltip(fontCombo, "Font");
+        fontCombo.setOnAction(e -> executeCommand(activeEngine, "fontName", fontCombo.getValue()));
 
         Separator sep2 = new Separator(Orientation.VERTICAL);
 
-        // --- Font Size ---
-        Button minusBtn = createRibbonButton("-", () -> executeCommand("decreaseFontSize", null));
-        addCustomTooltip(minusBtn, "Decrease font size");
-
+        Button minusBtn = createRibbonButton("-", () -> executeCommand(activeEngine, "decreaseFontSize", null));
         TextField fontSizeDisplay = new TextField("11");
         fontSizeDisplay.setPrefWidth(40);
         fontSizeDisplay.setAlignment(Pos.CENTER);
         fontSizeDisplay.setEditable(false);
         fontSizeDisplay.setStyle("-fx-background-color: transparent; -fx-border-color: #ccc; -fx-border-radius: 3;");
-
-        Button plusBtn = createRibbonButton("+", () -> executeCommand("increaseFontSize", null));
-        addCustomTooltip(plusBtn, "Increase font size");
+        Button plusBtn = createRibbonButton("+", () -> executeCommand(activeEngine, "increaseFontSize", null));
 
         Separator sep3 = new Separator(Orientation.VERTICAL);
 
-        // --- Formatting ---
-        Button boldBtn = createRibbonButton("B", () -> executeCommand("bold", null));
-        boldBtn.setStyle("-fx-font-weight: bold; -fx-background-color: transparent;");
-        addCustomTooltip(boldBtn, "Bold (Ctrl+B)");
-
-        Button italicBtn = createRibbonButton("I", () -> executeCommand("italic", null));
-        italicBtn.setStyle("-fx-font-style: italic; -fx-font-family: serif; -fx-background-color: transparent;");
-        addCustomTooltip(italicBtn, "Italic (Ctrl+I)");
-
-        Button underlineBtn = createRibbonButton("U", () -> executeCommand("underline", null));
-        underlineBtn.setStyle("-fx-underline: true; -fx-background-color: transparent;");
-        addCustomTooltip(underlineBtn, "Underline (Ctrl+U)");
+        Button boldBtn = createRibbonButton("B", () -> executeCommand(activeEngine, "bold", null));
+        boldBtn.setStyle("-fx-font-weight: bold;");
+        Button italicBtn = createRibbonButton("I", () -> executeCommand(activeEngine, "italic", null));
+        italicBtn.setStyle("-fx-font-style: italic; -fx-font-family: serif;");
+        Button underlineBtn = createRibbonButton("U", () -> executeCommand(activeEngine, "underline", null));
+        underlineBtn.setStyle("-fx-underline: true;");
 
         ColorPicker colorPicker = new ColorPicker(Color.BLACK);
         colorPicker.setStyle("-fx-color-label-visible: false; -fx-background-color: transparent; -fx-pref-width: 40px;");
-        colorPicker.setOnAction(e -> executeCommand("foreColor", toHexString(colorPicker.getValue())));
-        addCustomTooltip(colorPicker, "Text color");
+        colorPicker.setOnAction(e -> executeCommand(activeEngine, "foreColor", toHexString(colorPicker.getValue())));
 
         Separator sep4 = new Separator(Orientation.VERTICAL);
 
-        // --- Alignment ---
-        Button alignLeft = createRibbonButton("≡", () -> executeCommand("justifyLeft", null));
-        addCustomTooltip(alignLeft, "Left align (Ctrl+Shift+L)");
-
-        Button alignCenter = createRibbonButton("≚", () -> executeCommand("justifyCenter", null));
-        addCustomTooltip(alignCenter, "Center align (Ctrl+Shift+E)");
-
-        Button alignRight = createRibbonButton("≣", () -> executeCommand("justifyRight", null));
-        addCustomTooltip(alignRight, "Right align (Ctrl+Shift+R)");
+        Button alignLeft = createRibbonButton("≡", () -> executeCommand(activeEngine, "justifyLeft", null));
+        Button alignCenter = createRibbonButton("≚", () -> executeCommand(activeEngine, "justifyCenter", null));
+        Button alignRight = createRibbonButton("≣", () -> executeCommand(activeEngine, "justifyRight", null));
 
         Separator sep5 = new Separator(Orientation.VERTICAL);
 
-        // --- Lists ---
-        Button bulletListBtn = createRibbonButton("•≣", () -> executeCommand("insertUnorderedList", null));
-        addCustomTooltip(bulletListBtn, "Bulleted list (Ctrl+Shift+8)");
-
-        Button numListBtn = createRibbonButton("1.≣", () -> executeCommand("insertOrderedList", null));
-        addCustomTooltip(numListBtn, "Numbered list (Ctrl+Shift+7)");
+        Button bulletListBtn = createRibbonButton("•≣", () -> executeCommand(activeEngine, "insertUnorderedList", null));
+        Button numListBtn = createRibbonButton("1.≣", () -> executeCommand(activeEngine, "insertOrderedList", null));
 
         Separator sep6 = new Separator(Orientation.VERTICAL);
 
-        // --- Indentation ---
-        Button indentLessBtn = createRibbonButton("⇠", () -> executeCommand("outdent", null));
-        addCustomTooltip(indentLessBtn, "Decrease indent (Shift+Tab)");
-
-        Button indentMoreBtn = createRibbonButton("⇢", () -> executeCommand("indent", null));
-        addCustomTooltip(indentMoreBtn, "Increase indent (Tab)");
+        Button indentLessBtn = createRibbonButton("⇠", () -> executeCommand(activeEngine, "outdent", null));
+        Button indentMoreBtn = createRibbonButton("⇢", () -> executeCommand(activeEngine, "indent", null));
 
         Separator sep7 = new Separator(Orientation.VERTICAL);
-
-        // --- Clear Format ---
-        Button clearFormatBtn = createRibbonButton("Tₓ", () -> executeCommand("removeFormat", null));
-        addCustomTooltip(clearFormatBtn, "Clear formatting (Ctrl+\\)");
+        Button clearFormatBtn = createRibbonButton("Tₓ", () -> executeCommand(activeEngine, "removeFormat", null));
 
         ribbon.getChildren().addAll(
+            newTabBtn, sep0,
             undoBtn, redoBtn, printBtn, sep1,
             styleCombo, sepStyle,
             fontCombo, sep2,
@@ -180,108 +331,107 @@ public class TodoView extends VBox {
             clearFormatBtn
         );
 
-        // --- 2. The Editor (WebView) ---
-        todoEditor = new WebView();
-        webEngine = todoEditor.getEngine();
+        return ribbon;
+    }
 
-        // Keyboard Shortcuts (Exactly from App.java)
-        todoEditor.addEventFilter(KeyEvent.KEY_PRESSED, event -> {
-            if (event.getCode() == KeyCode.TAB) {
-                if (event.isShiftDown()) {
-                    executeCommand("outdent", null);
-                } else {
-                    executeCommand("indent", null);
+    private WebView getWebViewFromTab(Tab tab) {
+        if (tab.getContent() instanceof StackPane stack) {
+            if (!stack.getChildren().isEmpty() && stack.getChildren().get(0) instanceof VBox) {
+                VBox box = (VBox) stack.getChildren().get(0);
+                if (!box.getChildren().isEmpty() && box.getChildren().get(0) instanceof WebView) {
+                    return (WebView) box.getChildren().get(0);
                 }
+            }
+        }
+        return null;
+    }
+
+    private void createEmptyFile(Path path, String title) throws IOException {
+        String defaultContent = "<html><body contenteditable='true' style='font-family: Arial; font-size: 14px;'><h2>" + title + "</h2><p>Type here...</p></body></html>";
+        Files.write(path, defaultContent.getBytes(StandardCharsets.UTF_8));
+    }
+
+    private String loadFileContent(Path path) {
+        try { return new String(Files.readAllBytes(path), StandardCharsets.UTF_8); }
+        catch (IOException e) { return "<html><body>Error loading file</body></html>"; }
+    }
+
+    private void executeCommand(WebEngine engine, String cmd, String val) {
+        if (engine != null) {
+            engine.executeScript("document.execCommand('" + cmd + "', false, " + (val == null ? "null" : "'" + val + "'") + ")");
+        }
+    }
+
+    private void setupKeyboardShortcuts(WebView view, WebEngine engine) {
+        view.addEventFilter(KeyEvent.KEY_PRESSED, event -> {
+
+            // --- TRUE PAGE ZOOM (Fixed) ---
+            if (event.isShortcutDown()) {
+
+                double currentZoom = view.getZoom();
+                double newZoom = currentZoom;
+
+                if (null != event.getCode()) // Calculate New Zoom
+                    switch (event.getCode()) {
+                        case EQUALS, PLUS, ADD -> newZoom = currentZoom + 0.1;
+                        case MINUS, SUBTRACT -> newZoom = Math.max(0.1, currentZoom - 0.1);
+                        case DIGIT0, NUMPAD0 -> newZoom = 1.0;
+                        default -> {
+                        }
+                    }
+
+                // If zoom changed, apply it to BOTH View AND Container
+                if (newZoom != currentZoom) {
+                    view.setZoom(newZoom);
+
+                    // Also scale the "Paper" (VBox parent) so it doesn't just re-wrap text
+                    if (view.getParent() instanceof VBox pageSheet) {
+                        // Scale the width of the container to match the zoom
+                        pageSheet.setMaxWidth(BASE_PAGE_WIDTH * newZoom);
+                        pageSheet.setMinWidth(BASE_PAGE_WIDTH * newZoom);
+                    }
+
+                    event.consume();
+                    return;
+                }
+            }
+
+            // --- EXISTING SHORTCUTS ---
+            if (event.getCode() == KeyCode.TAB) {
+                if (event.isShiftDown()) executeCommand(engine, "outdent", null);
+                else executeCommand(engine, "indent", null);
                 event.consume();
                 return;
             }
-
             if (event.isShortcutDown()) {
                 KeyCode code = event.getCode();
-                if (code == KeyCode.B) { executeCommand("bold", null); event.consume(); }
-                else if (code == KeyCode.I) { executeCommand("italic", null); event.consume(); }
-                else if (code == KeyCode.U) { executeCommand("underline", null); event.consume(); }
-                else if (code == KeyCode.BACK_SLASH) { executeCommand("removeFormat", null); event.consume(); }
+                if (code == KeyCode.B) executeCommand(engine, "bold", null);
+                else if (code == KeyCode.I) executeCommand(engine, "italic", null);
+                else if (code == KeyCode.U) executeCommand(engine, "underline", null);
+                else if (code == KeyCode.BACK_SLASH) executeCommand(engine, "removeFormat", null);
                 else if (code == KeyCode.Z) {
-                    if (event.isShiftDown()) executeCommand("redo", null);
-                    else executeCommand("undo", null);
-                    event.consume();
+                    if (event.isShiftDown()) executeCommand(engine, "redo", null);
+                    else executeCommand(engine, "undo", null);
                 }
-                else if (code == KeyCode.Y) { executeCommand("redo", null); event.consume(); }
-                else if (code == KeyCode.DIGIT8 && event.isShiftDown()) { executeCommand("insertUnorderedList", null); event.consume(); }
-                else if (code == KeyCode.DIGIT7 && event.isShiftDown()) { executeCommand("insertOrderedList", null); event.consume(); }
-                else if (code == KeyCode.L && event.isShiftDown()) { executeCommand("justifyLeft", null); event.consume(); }
-                else if (code == KeyCode.E && event.isShiftDown()) { executeCommand("justifyCenter", null); event.consume(); }
-                else if (code == KeyCode.R && event.isShiftDown()) { executeCommand("justifyRight", null); event.consume(); }
+                else if (code == KeyCode.Y) executeCommand(engine, "redo", null);
+                else if (code == KeyCode.DIGIT8 && event.isShiftDown()) executeCommand(engine, "insertUnorderedList", null);
+                else if (code == KeyCode.DIGIT7 && event.isShiftDown()) executeCommand(engine, "insertOrderedList", null);
+                else if (code == KeyCode.L && event.isShiftDown()) executeCommand(engine, "justifyLeft", null);
+                else if (code == KeyCode.E && event.isShiftDown()) executeCommand(engine, "justifyCenter", null);
+                else if (code == KeyCode.R && event.isShiftDown()) executeCommand(engine, "justifyRight", null);
             }
         });
-
-        // Load Content
-        String initialContent = loadTodoHtml();
-        webEngine.loadContent(initialContent);
-
-        webEngine.getLoadWorker().stateProperty().addListener((obs, oldState, newState) -> {
-            if (newState == javafx.concurrent.Worker.State.SUCCEEDED) {
-                isEditorLoaded = true;
-                webEngine.executeScript("document.body.contentEditable = true;");
-                webEngine.executeScript("document.body.style.fontFamily = 'Arial';");
-                webEngine.executeScript("document.body.style.fontSize = '14px';");
-                webEngine.executeScript("document.body.style.margin = '0px';");
-            }
-        });
-
-        // Editor Page Styling (Matches "pageSheet" in App.java)
-        VBox pageSheet = new VBox(todoEditor);
-        pageSheet.setMaxWidth(850);
-        pageSheet.setPadding(new Insets(0));
-        pageSheet.setStyle("-fx-background-color: white; -fx-effect: dropshadow(three-pass-box, rgba(0,0,0,0.2), 10, 0, 0, 0);");
-        VBox.setVgrow(todoEditor, Priority.ALWAYS);
-
-        // Workspace Background
-        StackPane editorWorkspace = new StackPane(pageSheet);
-        editorWorkspace.setStyle("-fx-background-color: #F0F0F0;");
-        editorWorkspace.setPadding(new Insets(30));
-
-        this.getChildren().addAll(ribbon, editorWorkspace);
-        VBox.setVgrow(editorWorkspace, Priority.ALWAYS);
-    }
-
-    // --- Helper Methods Copied from App.java ---
-
-    public void save() {
-        if (isEditorLoaded && webEngine != null) {
-            try {
-                String htmlContent = (String) webEngine.executeScript("document.documentElement.outerHTML");
-                Files.createDirectories(todoFilePath.getParent());
-                Files.write(todoFilePath, htmlContent.getBytes(StandardCharsets.UTF_8));
-            } catch (IOException e) {
-                System.err.println("Error saving html notes: " + e.getMessage());
-            }
-        }
-    }
-
-    private void executeCommand(String command, String value) {
-        if (webEngine != null) {
-            if (value == null) {
-                webEngine.executeScript("document.execCommand('" + command + "', false, null)");
-            } else {
-                webEngine.executeScript("document.execCommand('" + command + "', false, '" + value + "')");
-            }
-        }
     }
 
     private Button createRibbonButton(String text, Runnable action) {
         Button btn = new Button(text);
         btn.setStyle("-fx-background-color: transparent; -fx-text-fill: #333; -fx-font-size: 14px; -fx-cursor: hand;");
         btn.setOnAction(e -> action.run());
-        btn.setOnMouseEntered(e -> btn.setStyle("-fx-background-color: #E1E5F2; -fx-text-fill: #000; -fx-background-radius: 4px; -fx-font-size: 14px;"));
+        btn.setOnMouseEntered(e -> {
+            if (!text.equals("+ New Tab")) btn.setStyle("-fx-background-color: #E1E5F2; -fx-text-fill: #000; -fx-background-radius: 4px; -fx-font-size: 14px;");
+        });
         btn.setOnMouseExited(e -> {
-            switch (text) {
-                case "B" -> btn.setStyle("-fx-font-weight: bold; -fx-background-color: transparent;");
-                case "I" -> btn.setStyle("-fx-font-style: italic; -fx-font-family: serif; -fx-background-color: transparent;");
-                case "U" -> btn.setStyle("-fx-underline: true; -fx-background-color: transparent;");
-                default -> btn.setStyle("-fx-background-color: transparent; -fx-text-fill: #333; -fx-font-size: 14px;");
-            }
+            if (!text.equals("+ New Tab")) btn.setStyle("-fx-background-color: transparent; -fx-text-fill: #333; -fx-font-size: 14px;");
         });
         return btn;
     }
@@ -294,23 +444,6 @@ public class TodoView extends VBox {
     }
 
     private String toHexString(Color color) {
-        return String.format("#%02X%02X%02X",
-            (int) (color.getRed() * 255),
-            (int) (color.getGreen() * 255),
-            (int) (color.getBlue() * 255));
-    }
-
-    private Path getTodoFilePath() {
-        String userHome = System.getProperty("user.home");
-        return Paths.get(userHome, ".petools", "todos.html"); 
-    }
-
-    private String loadTodoHtml() {
-        if (Files.exists(todoFilePath)) {
-            try {
-                return new String(Files.readAllBytes(todoFilePath), StandardCharsets.UTF_8);
-            } catch (IOException e) { System.err.println("Error loading html"); }
-        }
-        return "<html><body contenteditable='true' style='font-family: Arial; font-size: 14px;'>Type your notes here...</body></html>";
+        return String.format("#%02X%02X%02X", (int) (color.getRed() * 255), (int) (color.getGreen() * 255), (int) (color.getBlue() * 255));
     }
 }
