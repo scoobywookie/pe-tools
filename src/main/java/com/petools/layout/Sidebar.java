@@ -1,9 +1,17 @@
 package com.petools.layout;
 
+import com.petools.features.autocad.AutoCADView;
+import com.petools.features.projects.ProjectView;
+import com.petools.features.settings.SettingsView;
+import com.petools.features.sitelocator.SiteLocatorView;
+import com.petools.features.todo.TodoView;
+import com.petools.features.website.WebsiteView;
+
 import javafx.geometry.Insets;
 import javafx.scene.control.Button;
+import javafx.scene.layout.Priority;
+import javafx.scene.layout.Region;
 import javafx.scene.layout.VBox;
-import com.petools.features.todo.TodoView;
 
 public class Sidebar extends VBox {
 
@@ -30,7 +38,6 @@ public class Sidebar extends VBox {
 
         // 2. Create Buttons
         Button homeBtn = createNavButton("Home");
-        Button dashboardBtn = createNavButton("Dashboard");
         Button todoBtn = createNavButton("To-Do List");
         Button projectDataBtn = createNavButton("Projects");
         Button cadToolsBtn = createNavButton("AutoCAD");
@@ -46,7 +53,7 @@ public class Sidebar extends VBox {
 
         projectDataBtn.setOnAction(e -> {
             updateSelection(projectDataBtn);
-            mainLayout.setView(new com.petools.features.projects.ProjectView());
+            mainLayout.setView(new ProjectView());
         });
 
         todoBtn.setOnAction(e -> {
@@ -55,18 +62,34 @@ public class Sidebar extends VBox {
             cachedTodoView.save();
         });
 
-        // Placeholders
-        dashboardBtn.setOnAction(e -> { updateSelection(dashboardBtn); mainLayout.showPlaceholder("Dashboard"); });
-        cadToolsBtn.setOnAction(e -> { updateSelection(cadToolsBtn); mainLayout.showPlaceholder("AutoCAD Automation Dashboard"); });
-        siteLocatorBtn.setOnAction(e -> { updateSelection(siteLocatorBtn); mainLayout.showPlaceholder("Engineering Site Locator"); });
-        webMngmntBtn.setOnAction(e -> { updateSelection(webMngmntBtn); mainLayout.showPlaceholder("Website - Project Map Management"); });
-        settingsBtn.setOnAction(e -> { updateSelection(settingsBtn); mainLayout.showPlaceholder("Settings"); });
+        cadToolsBtn.setOnAction(e -> {
+            updateSelection(cadToolsBtn);
+            mainLayout.setView(new AutoCADView());
+        });
+
+        siteLocatorBtn.setOnAction(e -> {
+            updateSelection(siteLocatorBtn);
+            mainLayout.setView(new SiteLocatorView());
+        });
+
+        webMngmntBtn.setOnAction(e -> {
+            updateSelection(webMngmntBtn);
+            mainLayout.setView(new WebsiteView());
+        });
+
+        settingsBtn.setOnAction(e -> {
+            updateSelection(settingsBtn);
+            mainLayout.setView(new SettingsView());
+        });
+
+        Region spacer = new Region();
+        VBox.setVgrow(spacer, Priority.ALWAYS);
 
         // 4. Add to Layout
         this.getChildren().addAll(
-            homeBtn, dashboardBtn, todoBtn, projectDataBtn,
+            homeBtn, todoBtn, projectDataBtn,
             cadToolsBtn, siteLocatorBtn, webMngmntBtn,
-            settingsBtn
+            spacer, settingsBtn
         );
 
         // 5. Set Initial Selection

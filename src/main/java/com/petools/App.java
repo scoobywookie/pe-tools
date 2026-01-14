@@ -8,7 +8,6 @@ import javafx.application.Application;
 import javafx.scene.Scene;
 import javafx.scene.image.Image;
 import javafx.stage.Stage;
-
 public class App extends Application {
 
     @Override
@@ -18,6 +17,7 @@ public class App extends Application {
 
         Scene scene = new Scene(root, 1100, 675);
         stage.setTitle("PE Tools");
+
         InputStream iconStream = App.class.getResourceAsStream("/com/petools/images/pe_logo.png");
         if (iconStream != null) {
             stage.getIcons().add(new Image(iconStream));

@@ -1,449 +1,294 @@
 package com.petools.features.todo;
 
+import java.io.BufferedReader;
+import java.io.BufferedWriter;
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.time.DayOfWeek;
 import java.time.LocalDate;
-import java.time.format.DateTimeFormatter;
-import java.time.temporal.TemporalAdjusters;
+import java.time.temporal.WeekFields;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
-import java.util.Optional;
+import java.util.Locale;
+import java.util.Set;
 
-import javafx.collections.FXCollections;
+import javafx.application.Platform;
 import javafx.geometry.Insets;
-import javafx.geometry.Orientation;
 import javafx.geometry.Pos;
 import javafx.print.PrinterJob;
-import javafx.scene.control.Alert;
+import javafx.scene.Node;
 import javafx.scene.control.Button;
-import javafx.scene.control.ColorPicker;
-import javafx.scene.control.ComboBox;
-import javafx.scene.control.ContextMenu;
-import javafx.scene.control.Control;
-import javafx.scene.control.MenuItem;
+import javafx.scene.control.Label;
+import javafx.scene.control.ScrollPane;
 import javafx.scene.control.Separator;
 import javafx.scene.control.Tab;
 import javafx.scene.control.TabPane;
-import javafx.scene.control.TextField;
-import javafx.scene.control.TextInputDialog;
+import javafx.scene.control.ToolBar;
 import javafx.scene.control.Tooltip;
-import javafx.scene.input.KeyCode;
-import javafx.scene.input.KeyEvent;
+import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
-import javafx.scene.layout.StackPane;
+import javafx.scene.layout.Region;
 import javafx.scene.layout.VBox;
-import javafx.scene.paint.Color;
-import javafx.scene.web.WebEngine;
+import javafx.scene.web.HTMLEditor;
 import javafx.scene.web.WebView;
-import javafx.util.Duration;
 
-public class TodoView extends VBox {
+public class TodoView extends BorderPane {
 
-    private final TabPane tabPane;
-    private WebEngine activeEngine;
-    private final Path todoDir = Paths.get(System.getProperty("user.home"), ".petools", "todos");
+    private TabPane tabPane;
+    private final VBox tagSidebar;
 
-    // Constant for the base A4-ish width
-    private static final double BASE_PAGE_WIDTH = 850.0;
+    // File Paths
+    private static final Path DATA_DIR = Paths.get(System.getProperty("user.home"), ".petools", "notes");
+    private static final Path PROJECTS_FILE = Paths.get(System.getProperty("user.home"), ".petools", "projects.csv");
 
     public TodoView() {
-        this.setStyle("-fx-background-color: #F9FBFD;");
+        // Ensure notes directory exists
+        if (!Files.exists(DATA_DIR)) {
+            try { Files.createDirectories(DATA_DIR); } catch (IOException e) {}
+        }
 
-        HBox ribbon = createRibbon();
+        // --- 1. Left Sidebar (Project Navigation) ---
+        VBox headerBox = new VBox(5);
+        headerBox.setPadding(new Insets(10));
 
+        Label tagHeader = new Label("Projects");
+        tagHeader.setStyle("-fx-font-weight: bold; -fx-text-fill: #555; -fx-font-size: 14px;");
+
+        Button refreshBtn = new Button("↻ Refresh List");
+        refreshBtn.setMaxWidth(Double.MAX_VALUE);
+        refreshBtn.setStyle("-fx-font-size: 10px; -fx-background-color: transparent; -fx-text-fill: #0078d7; -fx-cursor: hand;");
+        refreshBtn.setOnAction(e -> refreshSidebar());
+
+        headerBox.getChildren().addAll(tagHeader, refreshBtn);
+
+        // Content Container
+        VBox tagContent = new VBox(8);
+        tagContent.setPadding(new Insets(10));
+        tagContent.setStyle("-fx-background-color: transparent;");
+
+        ScrollPane scrollWrapper = new ScrollPane(tagContent);
+        scrollWrapper.setFitToWidth(true);
+        scrollWrapper.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
+        scrollWrapper.setStyle("-fx-background-color: transparent; -fx-background: #f4f4f4;");
+        scrollWrapper.setPrefViewportWidth(150);
+
+        this.tagSidebar = tagContent;
+
+        BorderPane sidebarRoot = new BorderPane();
+        sidebarRoot.setTop(headerBox);
+        sidebarRoot.setCenter(scrollWrapper);
+        sidebarRoot.setPrefWidth(170);
+        sidebarRoot.setStyle("-fx-background-color: #f4f4f4; -fx-border-color: #ddd; -fx-border-width: 0 1 0 0;");
+
+        this.setLeft(sidebarRoot);
+
+        // --- 2. Center (Tabs) ---
         tabPane = new TabPane();
-        tabPane.setStyle("-fx-background-color: #F0F0F0; -fx-tab-min-width: 120px;");
+        tabPane.setStyle("-fx-background-color: white;");
+
+        // Load "Week X" tab by default if no tabs exist
+        // Note: We don't load ALL files on startup anymore to keep it clean.
+        // We only open the current week, and let the sidebar open project tabs.
+        openTab(getCurrentWeekName());
+
+        // Top Bar
+        Button printBtn = new Button("🖨 Print");
+        printBtn.setOnAction(e -> printCurrentTab());
+
+        Button addTabBtn = new Button("+ New Page");
+        addTabBtn.setOnAction(e -> openTab("New Page " + (tabPane.getTabs().size() + 1)));
+
+        HBox topControls = new HBox(10, spacer(), printBtn, addTabBtn);
+        topControls.setPadding(new Insets(5, 10, 5, 10));
+        topControls.setAlignment(Pos.CENTER_RIGHT);
+        topControls.setStyle("-fx-background-color: #f4f4f4; -fx-border-color: #ddd; -fx-border-width: 0 0 1 0;");
+
+        VBox centerLayout = new VBox(topControls, tabPane);
         VBox.setVgrow(tabPane, Priority.ALWAYS);
 
-        tabPane.getSelectionModel().selectedItemProperty().addListener((obs, oldTab, newTab) -> {
-            if (newTab != null) {
-                WebView view = getWebViewFromTab(newTab);
-                if (view != null) {
-                    activeEngine = view.getEngine();
-                    view.requestFocus();
-                }
-            }
-        });
+        this.setCenter(centerLayout);
 
-        initializeTabs();
-
-        this.getChildren().addAll(ribbon, tabPane);
-    }
-
-    private void initializeTabs() {
-        try {
-            if (!Files.exists(todoDir)) Files.createDirectories(todoDir);
-
-            LocalDate today = LocalDate.now();
-            LocalDate thisMonday = today.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY));
-            String mondayName = "Week_" + thisMonday.format(DateTimeFormatter.ISO_LOCAL_DATE) + ".html";
-            Path currentWeekFile = todoDir.resolve(mondayName);
-
-            if (!Files.exists(currentWeekFile)) {
-                createEmptyFile(currentWeekFile, "Week of " + thisMonday.format(DateTimeFormatter.ISO_LOCAL_DATE));
-            }
-
-            List<Path> allFiles = new ArrayList<>();
-            try (DirectoryStream<Path> stream = Files.newDirectoryStream(todoDir, "*.html")) {
-                for (Path entry : stream) allFiles.add(entry);
-            }
-            allFiles.sort(Collections.reverseOrder());
-
-            for (Path file : allFiles) {
-                addTab(file);
-            }
-
-            if (!tabPane.getTabs().isEmpty()) {
-                tabPane.getSelectionModel().select(0);
-            }
-
-        } catch (IOException e) {}
-    }
-
-    private void addTab(Path filePath) {
-        String filename = filePath.getFileName().toString().replace(".html", "");
-        String displayName = filename.startsWith("Week_") ? "Week of " + filename.replace("Week_", "") : filename;
-
-        Tab tab = new Tab(displayName);
-        tab.setUserData(filePath);
-
-        ContextMenu contextMenu = new ContextMenu();
-        MenuItem renameItem = new MenuItem("Rename Tab");
-        renameItem.setOnAction(e -> handleRename(tab));
-        contextMenu.getItems().add(renameItem);
-        tab.setContextMenu(contextMenu);
-
-        WebView editor = new WebView();
-        WebEngine engine = editor.getEngine();
-        engine.loadContent(loadFileContent(filePath));
-
-        engine.getLoadWorker().stateProperty().addListener((obs, oldState, newState) -> {
-            if (newState == javafx.concurrent.Worker.State.SUCCEEDED) {
-                engine.executeScript("document.body.contentEditable = true;");
-                engine.executeScript("document.body.style.fontFamily = 'Arial';");
-                engine.executeScript("document.body.style.fontSize = '14px';");
-                engine.executeScript("document.body.style.margin = '0px';");
-            }
-        });
-
-        setupKeyboardShortcuts(editor, engine);
-
-        VBox pageSheet = new VBox(editor);
-        pageSheet.setMaxWidth(BASE_PAGE_WIDTH);
-        pageSheet.setPadding(new Insets(0));
-        pageSheet.setStyle("-fx-background-color: white; -fx-effect: dropshadow(three-pass-box, rgba(0,0,0,0.2), 10, 0, 0, 0);");
-        VBox.setVgrow(editor, Priority.ALWAYS);
-
-        StackPane workspace = new StackPane(pageSheet);
-        workspace.setStyle("-fx-background-color: #F0F0F0;");
-        workspace.setPadding(new Insets(30));
-
-        tab.setContent(workspace);
-        tabPane.getTabs().add(tab);
-
-        tabPane.getSelectionModel().select(tab);
-    }
-
-    private void handleNewTab() {
-        TextInputDialog dialog = new TextInputDialog("New Notes");
-        dialog.setTitle("New Tab");
-        dialog.setHeaderText("Create a new document");
-        dialog.setContentText("Enter name:");
-
-        Optional<String> result = dialog.showAndWait();
-        result.ifPresent(name -> {
-            String safeName = name.trim().replaceAll("[^a-zA-Z0-9 _-]", ""); 
-            if (safeName.isEmpty()) safeName = "Untitled";
-
-            Path newPath = todoDir.resolve(safeName + ".html");
-
-            if (Files.exists(newPath)) {
-                Alert alert = new Alert(Alert.AlertType.ERROR, "A file with this name already exists.");
-                alert.showAndWait();
-                return;
-            }
-
-            try {
-                createEmptyFile(newPath, safeName);
-                addTab(newPath);
-            } catch (IOException e) {
-            }
-        });
-    }
-
-    private void handleRename(Tab tab) {
-        TextInputDialog dialog = new TextInputDialog(tab.getText());
-        dialog.setTitle("Rename Tab");
-        dialog.setHeaderText("Rename '" + tab.getText() + "'");
-        dialog.setContentText("New name:");
-
-        Optional<String> result = dialog.showAndWait();
-        result.ifPresent(name -> {
-            String safeName = name.trim().replaceAll("[^a-zA-Z0-9 _-]", "");
-            if (safeName.isEmpty()) return;
-
-            Path oldPath = (Path) tab.getUserData();
-            Path newPath = todoDir.resolve(safeName + ".html");
-
-            if (Files.exists(newPath)) {
-                Alert alert = new Alert(Alert.AlertType.ERROR, "A file with this name already exists.");
-                alert.showAndWait();
-                return;
-            }
-
-            try {
-                saveTab(tab);
-                Files.move(oldPath, newPath);
-                tab.setText(safeName);
-                tab.setUserData(newPath);
-            } catch (IOException e) {
-                Alert alert = new Alert(Alert.AlertType.ERROR, "Could not rename file.");
-                alert.showAndWait();
-            }
-        });
+        refreshSidebar();
     }
 
     public void save() {
-        for (Tab tab : tabPane.getTabs()) {
-            saveTab(tab);
+        Tab currentTab = tabPane.getSelectionModel().getSelectedItem();
+        if (currentTab != null && currentTab.getContent() instanceof HTMLEditor) {
+            HTMLEditor editor = (HTMLEditor) currentTab.getContent();
+            saveTab(currentTab, editor.getHtmlText());
         }
     }
 
-    private void saveTab(Tab tab) {
-        WebView view = getWebViewFromTab(tab);
-        Path path = (Path) tab.getUserData();
-        if (view != null && path != null) {
-            try {
-                String html = (String) view.getEngine().executeScript("document.documentElement.outerHTML");
-                Files.write(path, html.getBytes(StandardCharsets.UTF_8));
-            } catch (IOException e) { System.err.println("Error saving tab: " + path); }
-        }
-    }
+    // --- Sidebar Logic ---
 
-    private HBox createRibbon() {
-        HBox ribbon = new HBox(5);
-        ribbon.setPadding(new Insets(8, 15, 8, 15));
-        ribbon.setAlignment(Pos.CENTER_LEFT);
-        ribbon.setStyle("-fx-background-color: #EDF2FA; -fx-effect: dropshadow(three-pass-box, rgba(0,0,0,0.1), 0, 0, 0, 1);");
+    private void refreshSidebar() {
+        tagSidebar.getChildren().clear();
 
-        Button newTabBtn = createRibbonButton("+ New Tab", this::handleNewTab);
-        newTabBtn.setStyle("-fx-background-color: #4CAF50; -fx-text-fill: white; -fx-font-weight: bold; -fx-background-radius: 4;");
-        addCustomTooltip(newTabBtn, "Create a new document");
+        // 1. Weekly / General Navigation
+        tagSidebar.getChildren().add(new Label("General"));
+        tagSidebar.getChildren().add(createNavButton("📅 This Week", getCurrentWeekName(), "#e3f2fd", "#0d47a1"));
 
-        Separator sep0 = new Separator(Orientation.VERTICAL);
+        tagSidebar.getChildren().add(new Separator());
+        tagSidebar.getChildren().add(new Label("Active Projects"));
 
-        Button undoBtn = createRibbonButton("↶", () -> executeCommand(activeEngine, "undo", null));
-        addCustomTooltip(undoBtn, "Undo (Ctrl+Z)");
-
-        Button redoBtn = createRibbonButton("↷", () -> executeCommand(activeEngine, "redo", null));
-        addCustomTooltip(redoBtn, "Redo (Ctrl+Y)");
-
-        Button printBtn = createRibbonButton("🖨", () -> {
-            if (activeEngine != null) {
-                PrinterJob job = PrinterJob.createPrinterJob();
-                if (job != null && job.showPrintDialog(getScene().getWindow())) {
-                    activeEngine.print(job);
-                    job.endJob();
-                }
-            }
-        });
-        addCustomTooltip(printBtn, "Print");
-
-        Separator sep1 = new Separator(Orientation.VERTICAL);
-
-        ComboBox<String> styleCombo = new ComboBox<>(FXCollections.observableArrayList("Normal text", "Title", "Subtitle", "Heading 1", "Heading 2", "Heading 3"));
-        styleCombo.getSelectionModel().selectFirst();
-        styleCombo.setPrefWidth(120);
-        styleCombo.setStyle("-fx-background-color: transparent; -fx-border-color: transparent; -fx-font-family: 'Arial';");
-        styleCombo.setOnAction(e -> {
-            String val = styleCombo.getValue();
-            String tag = val.equals("Normal text") ? "<p>" : val.equals("Title") ? "<h1>" : val.equals("Subtitle") ? "<h2>" : val.equals("Heading 1") ? "<h3>" : val.equals("Heading 2") ? "<h4>" : "<h5>";
-            executeCommand(activeEngine, "formatBlock", tag);
-        });
-
-        Separator sepStyle = new Separator(Orientation.VERTICAL);
-
-        ComboBox<String> fontCombo = new ComboBox<>(FXCollections.observableArrayList("Arial", "Courier New", "Georgia", "Times New Roman", "Verdana", "Comic Sans MS"));
-        fontCombo.getSelectionModel().select("Arial");
-        fontCombo.setStyle("-fx-background-color: transparent;");
-        fontCombo.setPrefWidth(110);
-        fontCombo.setOnAction(e -> executeCommand(activeEngine, "fontName", fontCombo.getValue()));
-
-        Separator sep2 = new Separator(Orientation.VERTICAL);
-
-        Button minusBtn = createRibbonButton("-", () -> executeCommand(activeEngine, "decreaseFontSize", null));
-        TextField fontSizeDisplay = new TextField("11");
-        fontSizeDisplay.setPrefWidth(40);
-        fontSizeDisplay.setAlignment(Pos.CENTER);
-        fontSizeDisplay.setEditable(false);
-        fontSizeDisplay.setStyle("-fx-background-color: transparent; -fx-border-color: #ccc; -fx-border-radius: 3;");
-        Button plusBtn = createRibbonButton("+", () -> executeCommand(activeEngine, "increaseFontSize", null));
-
-        Separator sep3 = new Separator(Orientation.VERTICAL);
-
-        Button boldBtn = createRibbonButton("B", () -> executeCommand(activeEngine, "bold", null));
-        boldBtn.setStyle("-fx-font-weight: bold;");
-        Button italicBtn = createRibbonButton("I", () -> executeCommand(activeEngine, "italic", null));
-        italicBtn.setStyle("-fx-font-style: italic; -fx-font-family: serif;");
-        Button underlineBtn = createRibbonButton("U", () -> executeCommand(activeEngine, "underline", null));
-        underlineBtn.setStyle("-fx-underline: true;");
-
-        ColorPicker colorPicker = new ColorPicker(Color.BLACK);
-        colorPicker.setStyle("-fx-color-label-visible: false; -fx-background-color: transparent; -fx-pref-width: 40px;");
-        colorPicker.setOnAction(e -> executeCommand(activeEngine, "foreColor", toHexString(colorPicker.getValue())));
-
-        Separator sep4 = new Separator(Orientation.VERTICAL);
-
-        Button alignLeft = createRibbonButton("≡", () -> executeCommand(activeEngine, "justifyLeft", null));
-        Button alignCenter = createRibbonButton("≚", () -> executeCommand(activeEngine, "justifyCenter", null));
-        Button alignRight = createRibbonButton("≣", () -> executeCommand(activeEngine, "justifyRight", null));
-
-        Separator sep5 = new Separator(Orientation.VERTICAL);
-
-        Button bulletListBtn = createRibbonButton("•≣", () -> executeCommand(activeEngine, "insertUnorderedList", null));
-        Button numListBtn = createRibbonButton("1.≣", () -> executeCommand(activeEngine, "insertOrderedList", null));
-
-        Separator sep6 = new Separator(Orientation.VERTICAL);
-
-        Button indentLessBtn = createRibbonButton("⇠", () -> executeCommand(activeEngine, "outdent", null));
-        Button indentMoreBtn = createRibbonButton("⇢", () -> executeCommand(activeEngine, "indent", null));
-
-        Separator sep7 = new Separator(Orientation.VERTICAL);
-        Button clearFormatBtn = createRibbonButton("Tₓ", () -> executeCommand(activeEngine, "removeFormat", null));
-
-        ribbon.getChildren().addAll(
-            newTabBtn, sep0,
-            undoBtn, redoBtn, printBtn, sep1,
-            styleCombo, sepStyle,
-            fontCombo, sep2,
-            minusBtn, fontSizeDisplay, plusBtn, sep3,
-            boldBtn, italicBtn, underlineBtn, colorPicker, sep4,
-            alignLeft, alignCenter, alignRight, sep5,
-            bulletListBtn, numListBtn, sep6,
-            indentLessBtn, indentMoreBtn, sep7,
-            clearFormatBtn
-        );
-
-        return ribbon;
-    }
-
-    private WebView getWebViewFromTab(Tab tab) {
-        if (tab.getContent() instanceof StackPane stack) {
-            if (!stack.getChildren().isEmpty() && stack.getChildren().get(0) instanceof VBox) {
-                VBox box = (VBox) stack.getChildren().get(0);
-                if (!box.getChildren().isEmpty() && box.getChildren().get(0) instanceof WebView) {
-                    return (WebView) box.getChildren().get(0);
-                }
+        // 2. Project List
+        List<String> projects = loadActiveProjects();
+        if (projects.isEmpty()) {
+            Label empty = new Label("(No active projects)");
+            empty.setStyle("-fx-font-size: 10px; -fx-text-fill: #999;");
+            tagSidebar.getChildren().add(empty);
+        } else {
+            for (String p : projects) {
+                String color = generateColor(p);
+                // Action: Open a tab with the Project Name
+                tagSidebar.getChildren().add(createNavButton(p, p, color, "#333333"));
             }
         }
-        return null;
     }
 
-    private void createEmptyFile(Path path, String title) throws IOException {
-        String defaultContent = "<html><body contenteditable='true' style='font-family: Arial; font-size: 14px;'><h2>" + title + "</h2><p>Type here...</p></body></html>";
-        Files.write(path, defaultContent.getBytes(StandardCharsets.UTF_8));
-    }
+    private Button createNavButton(String label, String targetTabName, String bgHex, String textHex) {
+        Button btn = new Button(label);
+        btn.setMaxWidth(Double.MAX_VALUE);
+        btn.setAlignment(Pos.BASELINE_LEFT);
+        btn.setStyle(String.format(
+            "-fx-background-color: %s; -fx-text-fill: %s; -fx-font-weight: bold; -fx-background-radius: 4; -fx-cursor: hand; -fx-padding: 6 10;", 
+            bgHex, textHex
+        ));
 
-    private String loadFileContent(Path path) {
-        try { return new String(Files.readAllBytes(path), StandardCharsets.UTF_8); }
-        catch (IOException e) { return "<html><body>Error loading file</body></html>"; }
-    }
+        // ACTION: Switch to Tab
+        btn.setOnAction(e -> openTab(targetTabName));
 
-    private void executeCommand(WebEngine engine, String cmd, String val) {
-        if (engine != null) {
-            engine.executeScript("document.execCommand('" + cmd + "', false, " + (val == null ? "null" : "'" + val + "'") + ")");
-        }
-    }
-
-    private void setupKeyboardShortcuts(WebView view, WebEngine engine) {
-        view.addEventFilter(KeyEvent.KEY_PRESSED, event -> {
-
-            // --- TRUE PAGE ZOOM (Fixed) ---
-            if (event.isShortcutDown()) {
-
-                double currentZoom = view.getZoom();
-                double newZoom = currentZoom;
-
-                if (null != event.getCode()) // Calculate New Zoom
-                    switch (event.getCode()) {
-                        case EQUALS, PLUS, ADD -> newZoom = currentZoom + 0.1;
-                        case MINUS, SUBTRACT -> newZoom = Math.max(0.1, currentZoom - 0.1);
-                        case DIGIT0, NUMPAD0 -> newZoom = 1.0;
-                        default -> {
-                        }
-                    }
-
-                // If zoom changed, apply it to BOTH View AND Container
-                if (newZoom != currentZoom) {
-                    view.setZoom(newZoom);
-
-                    // Also scale the "Paper" (VBox parent) so it doesn't just re-wrap text
-                    if (view.getParent() instanceof VBox pageSheet) {
-                        // Scale the width of the container to match the zoom
-                        pageSheet.setMaxWidth(BASE_PAGE_WIDTH * newZoom);
-                        pageSheet.setMinWidth(BASE_PAGE_WIDTH * newZoom);
-                    }
-
-                    event.consume();
-                    return;
-                }
-            }
-
-            // --- EXISTING SHORTCUTS ---
-            if (event.getCode() == KeyCode.TAB) {
-                if (event.isShiftDown()) executeCommand(engine, "outdent", null);
-                else executeCommand(engine, "indent", null);
-                event.consume();
-                return;
-            }
-            if (event.isShortcutDown()) {
-                KeyCode code = event.getCode();
-                if (code == KeyCode.B) executeCommand(engine, "bold", null);
-                else if (code == KeyCode.I) executeCommand(engine, "italic", null);
-                else if (code == KeyCode.U) executeCommand(engine, "underline", null);
-                else if (code == KeyCode.BACK_SLASH) executeCommand(engine, "removeFormat", null);
-                else if (code == KeyCode.Z) {
-                    if (event.isShiftDown()) executeCommand(engine, "redo", null);
-                    else executeCommand(engine, "undo", null);
-                }
-                else if (code == KeyCode.Y) executeCommand(engine, "redo", null);
-                else if (code == KeyCode.DIGIT8 && event.isShiftDown()) executeCommand(engine, "insertUnorderedList", null);
-                else if (code == KeyCode.DIGIT7 && event.isShiftDown()) executeCommand(engine, "insertOrderedList", null);
-                else if (code == KeyCode.L && event.isShiftDown()) executeCommand(engine, "justifyLeft", null);
-                else if (code == KeyCode.E && event.isShiftDown()) executeCommand(engine, "justifyCenter", null);
-                else if (code == KeyCode.R && event.isShiftDown()) executeCommand(engine, "justifyRight", null);
-            }
-        });
-    }
-
-    private Button createRibbonButton(String text, Runnable action) {
-        Button btn = new Button(text);
-        btn.setStyle("-fx-background-color: transparent; -fx-text-fill: #333; -fx-font-size: 14px; -fx-cursor: hand;");
-        btn.setOnAction(e -> action.run());
-        btn.setOnMouseEntered(e -> {
-            if (!text.equals("+ New Tab")) btn.setStyle("-fx-background-color: #E1E5F2; -fx-text-fill: #000; -fx-background-radius: 4px; -fx-font-size: 14px;");
-        });
-        btn.setOnMouseExited(e -> {
-            if (!text.equals("+ New Tab")) btn.setStyle("-fx-background-color: transparent; -fx-text-fill: #333; -fx-font-size: 14px;");
-        });
         return btn;
     }
 
-    private void addCustomTooltip(Control control, String text) {
-        Tooltip t = new Tooltip(text);
-        t.setShowDelay(Duration.millis(100));
-        t.setStyle("-fx-background-color: #202124; -fx-text-fill: white; -fx-font-size: 12px; -fx-padding: 6px;");
-        control.setTooltip(t);
+    private String generateColor(String seed) {
+        int hash = seed.hashCode();
+        int r = (hash & 0xFF0000) >> 16;
+        int g = (hash & 0x00FF00) >> 8;
+        int b = hash & 0x0000FF;
+        r = (r + 255) / 2; g = (g + 255) / 2; b = (b + 255) / 2;
+        return String.format("#%02x%02x%02x", r, g, b);
     }
 
-    private String toHexString(Color color) {
-        return String.format("#%02X%02X%02X", (int) (color.getRed() * 255), (int) (color.getGreen() * 255), (int) (color.getBlue() * 255));
+    private List<String> loadActiveProjects() {
+        List<String> list = new ArrayList<>();
+        if (!Files.exists(PROJECTS_FILE)) return list;
+
+        try (BufferedReader reader = Files.newBufferedReader(PROJECTS_FILE)) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                String[] parts = line.split(",", -1);
+                // CSV: Name,Client,Status...
+                if (parts.length >= 3) {
+                    if ("Active".equalsIgnoreCase(parts[2])) {
+                        String name = parts[0].replace(";", ",");
+                        if (!name.isEmpty()) list.add(name);
+                    }
+                }
+            }
+        } catch (Exception e) {}
+        return list;
+    }
+
+    // --- Tab Management ---
+
+    private void openTab(String title) {
+        // 1. Check if tab is already open
+        for (Tab t : tabPane.getTabs()) {
+            if (t.getText().equals(title)) {
+                tabPane.getSelectionModel().select(t);
+                return;
+            }
+        }
+
+        // 2. If not, create it and try to load content
+        createNewTab(title);
+    }
+
+    private void createNewTab(String title) {
+        Tab tab = new Tab(title);
+
+        HTMLEditor editor = new HTMLEditor();
+        editor.setPrefHeight(2000);
+
+        customizeEditor(editor);
+
+        // Try to load existing content for this title
+        String filename = title.replaceAll("[^a-zA-Z0-9.-]", "_") + ".html";
+        Path path = DATA_DIR.resolve(filename);
+        if (Files.exists(path)) {
+            try {
+                String content = new String(Files.readAllBytes(path));
+                editor.setHtmlText(content);
+            } catch (IOException e) {}
+        }
+
+        // Autosave logic
+        editor.setOnKeyReleased(e -> saveTab(tab, editor.getHtmlText()));
+        editor.focusedProperty().addListener((obs, oldVal, newVal) -> {
+            if (!newVal) saveTab(tab, editor.getHtmlText());
+        });
+
+        tab.setContent(editor);
+
+        tabPane.getTabs().add(tab);
+        tabPane.getSelectionModel().select(tab);
+    }
+
+    private void customizeEditor(HTMLEditor editor) {
+        Platform.runLater(() -> {
+            Set<Node> toolbars = editor.lookupAll(".tool-bar");
+            if (toolbars.isEmpty()) return;
+
+            // Inject Print Button next to Scissors
+            ToolBar topToolbar = (ToolBar) toolbars.iterator().next();
+            Button printBtn = new Button("🖨");
+            printBtn.setTooltip(new Tooltip("Print Page"));
+            printBtn.setStyle("-fx-font-size: 11px; -fx-padding: 4 8;");
+            printBtn.setOnAction(e -> printEditor(editor));
+            topToolbar.getItems().add(new Separator());
+            topToolbar.getItems().add(printBtn);
+        });
+    }
+
+    private void printCurrentTab() {
+        Tab current = tabPane.getSelectionModel().getSelectedItem();
+        if (current != null && current.getContent() instanceof HTMLEditor) {
+            printEditor((HTMLEditor) current.getContent());
+        }
+    }
+
+    private void printEditor(HTMLEditor editor) {
+        WebView view = (WebView) editor.lookup(".web-view");
+        if (view != null) {
+            PrinterJob job = PrinterJob.createPrinterJob();
+            if (job != null && job.showPrintDialog(getScene().getWindow())) {
+                view.getEngine().print(job);
+                job.endJob();
+            }
+        }
+    }
+
+    private void saveTab(Tab tab, String content) {
+        String filename = tab.getText().replaceAll("[^a-zA-Z0-9.-]", "_") + ".html";
+        try (BufferedWriter writer = Files.newBufferedWriter(DATA_DIR.resolve(filename))) {
+            writer.write(content);
+        } catch (IOException e) {
+        }
+    }
+
+    private String getCurrentWeekName() {
+        LocalDate date = LocalDate.now();
+        WeekFields weekFields = WeekFields.of(Locale.getDefault());
+        int weekNumber = date.get(weekFields.weekOfWeekBasedYear());
+        return "Week " + weekNumber + " (" + date.getYear() + ")";
+    }
+
+    private Region spacer() {
+        Region r = new Region();
+        HBox.setHgrow(r, Priority.ALWAYS);
+        return r;
     }
 }
