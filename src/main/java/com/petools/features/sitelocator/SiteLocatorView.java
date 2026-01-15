@@ -63,7 +63,7 @@ public class SiteLocatorView extends BorderPane {
         // Browser Controls
         Button backBtn = new Button("←");
         backBtn.setOnAction(e -> engine.getHistory().go(-1));
-        
+
         Button refreshBtn = new Button("⟳");
         refreshBtn.setOnAction(e -> engine.reload());
 
@@ -77,13 +77,13 @@ public class SiteLocatorView extends BorderPane {
         // --- Browser ---
         browser = new WebView();
         engine = browser.getEngine();
-        
+
         // Listen to URL changes to update the text bar
         engine.locationProperty().addListener((obs, oldVal, newVal) -> urlField.setText(newVal));
 
         // Load default
         loadSelectedTool();
-        
+
         this.setCenter(browser);
     }
 

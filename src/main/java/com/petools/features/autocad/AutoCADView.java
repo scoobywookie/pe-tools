@@ -3,10 +3,13 @@ package com.petools.features.autocad;
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.nio.file.StandardCopyOption;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 
@@ -29,7 +32,7 @@ public class AutoCADView extends VBox {
     private final TextArea consoleLog;
 
     // PORTABLE PATH: Looks for "scripts/address_to_scr.exe" inside the app folder
-    private static final Path SCRIPT_DIR = Paths.get("scripts");
+    private static final Path SCRIPT_DIR = Paths.get(System.getProperty("user.home"), ".petools", "scripts");
     private static final Path SCRIPT_PATH = SCRIPT_DIR.resolve("address_to_scr.exe");
 
     public AutoCADView() {
@@ -40,6 +43,9 @@ public class AutoCADView extends VBox {
         // --- Header ---
         Label header = new Label("AutoCAD Automation Dashboard");
         header.setStyle("-fx-font-size: 24px; -fx-font-weight: bold; -fx-text-fill: #333;");
+
+        // --- 1. SELF-HEAL CHECK (Extract .exe if missing) ---
+        ensureScriptExists();
 
         // --- Section 1: Site Setup ---
         VBox siteSection = new VBox(10);
@@ -118,6 +124,29 @@ public class AutoCADView extends VBox {
 
         // Add the topRow (side-by-side) instead of individual sections
         this.getChildren().addAll(header, topRow, logSection);
+    }
+
+    private void ensureScriptExists() {
+        try {
+            // 1. Create folder if missing
+            if (!Files.exists(SCRIPT_DIR)) {
+                Files.createDirectories(SCRIPT_DIR);
+            }
+
+            // 2. If .exe is missing, extract it from the JAR
+            if (!Files.exists(SCRIPT_PATH)) {
+                try (InputStream in = getClass().getResourceAsStream("/scripts/address_to_scr.exe")) {
+                    if (in != null) {
+                        Files.copy(in, SCRIPT_PATH, StandardCopyOption.REPLACE_EXISTING);
+                        log("Restored missing automation script.");
+                    } else {
+                        log("ERROR: Could not find script inside app resources!");
+                    }
+                }
+            }
+        } catch (IOException e) {
+            log("Error checking script: " + e.getMessage());
+        }
     }
 
     private void runExeScript() {

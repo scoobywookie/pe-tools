@@ -9,20 +9,17 @@ import java.nio.file.Paths;
 import java.time.LocalDate;
 import java.time.temporal.WeekFields;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
 import java.util.Set;
 
 import javafx.application.Platform;
-import javafx.collections.ObservableList;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.print.PrinterJob;
 import javafx.scene.Node;
 import javafx.scene.control.Button;
-import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
 import javafx.scene.control.ScrollPane;
 import javafx.scene.control.Separator;
@@ -221,66 +218,17 @@ public class TodoView extends BorderPane {
         ToolBar topToolbar = (ToolBar) toolbars.toArray()[0];
         ToolBar bottomToolbar = (ToolBar) toolbars.toArray()[1];
 
-        // 1. Add "Insert Link" to Bottom Toolbar (Fits better with text tools)
+        // Add "Insert Link" to Bottom Toolbar (Fits better with text tools)
         Button linkBtn = new Button("🔗");
         linkBtn.setStyle("-fx-font-size: 11px; -fx-padding: 4 8;");
         linkBtn.setOnAction(e -> promptForLink(editor));
         bottomToolbar.getItems().addAll(new Separator(), linkBtn);
 
-        // 2. Add "Print" to Top Toolbar (Far right)
+        // Add "Print" to Top Toolbar (Far right)
         Button printBtn = new Button("🖨");
         printBtn.setStyle("-fx-font-size: 11px; -fx-padding: 4 8;");
         printBtn.setOnAction(e -> printEditor(editor));
         topToolbar.getItems().addAll(new Separator(), printBtn);
-
-        // 3. Rename "Paragraph" to "Normal Text"
-        Node formatNode = editor.lookup(".format-menu-button");
-        if (formatNode instanceof ComboBox) {
-            ComboBox<String> formatCombo = (ComboBox<String>) formatNode;
-            ObservableList<String> items = formatCombo.getItems();
-            int pIndex = items.indexOf("Paragraph");
-            if (pIndex >= 0) {
-                items.set(pIndex, "Normal Text");
-            }
-            // Logic Fix: Ensure "Normal Text" actually sends the 'p' command
-            formatCombo.getSelectionModel().selectedItemProperty().addListener((obs, oldVal, newVal) -> {
-                if ("Normal Text".equals(newVal)) {
-                    WebView view = (WebView) editor.lookup(".web-view");
-                    if (view != null) view.getEngine().executeScript("document.execCommand('formatBlock', false, 'p')");
-                }
-            });
-        }
-
-        // 4. Sort Fonts (Put Popular ones at the top)
-        Node fontNode = editor.lookup(".font-family-menu-button");
-        if (fontNode instanceof ComboBox) {
-            ComboBox<String> fontCombo = (ComboBox<String>) fontNode;
-            ObservableList<String> fonts = fontCombo.getItems();
-
-            // Define Popular Fonts
-            List<String> popular = List.of("Arial", "Calibri", "Cambria", "Helvetica", "Times New Roman", "Verdana", "System");
-
-            // 1. Separate existing fonts into Popular vs Others
-            List<String> topList = new ArrayList<>();
-            List<String> bottomList = new ArrayList<>();
-
-            for (String f : fonts) {
-                if (popular.contains(f)) topList.add(f);
-                else bottomList.add(f);
-            }
-
-            // 2. Sort popular list to match our preferred order (optional) or just alpha
-            Collections.sort(topList);
-            Collections.sort(bottomList);
-
-            // 3. Rebuild list
-            fonts.clear();
-            fonts.addAll(topList);
-            fonts.addAll(bottomList);
-
-            // select the first one (usually System or Arial) so it isn't blank
-            if (!fonts.isEmpty()) fontCombo.getSelectionModel().select(0);
-        }
     }
 
     private void enableKeyboardShortcuts(HTMLEditor editor) {
@@ -295,7 +243,7 @@ public class TodoView extends BorderPane {
                 if (k == KeyCode.B) engine.executeScript("document.execCommand('bold', false, null)");
                 else if (k == KeyCode.I) engine.executeScript("document.execCommand('italic', false, null)");
                 else if (k == KeyCode.U) engine.executeScript("document.execCommand('underline', false, null)");
-                else if (k == KeyCode.K) promptForLink(editor); 
+                else if (k == KeyCode.K) promptForLink(editor);
                 else if (k == KeyCode.P) printEditor(editor);
                 else if (k == KeyCode.BACK_SLASH) engine.executeScript("document.execCommand('removeFormat', false, null)");
                 else if (event.isShiftDown()) {

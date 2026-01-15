@@ -37,7 +37,7 @@ public class WebsiteView extends BorderPane {
         openExternalBtn.setStyle("-fx-background-color: #0078d7; -fx-text-fill: white; -fx-cursor: hand;");
         openExternalBtn.setOnAction(e -> openInSystemBrowser(MAP_URL));
 
-        // CHANGED: "Home/Reset" logic instead of just "Reload"
+        // "Home/Reset" logic
         Button resetBtn = new Button("⟳ Reset Map");
         resetBtn.setOnAction(e -> {
             WebView view = (WebView) this.getCenter();

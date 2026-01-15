@@ -2,9 +2,11 @@ package com.petools.features.settings;
 
 import java.awt.Desktop;
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.nio.file.StandardCopyOption;
 
 import javafx.geometry.Insets;
 import javafx.scene.control.Button;
@@ -51,6 +53,27 @@ public class SettingsView extends VBox {
         // (C:\Users\Name\.petools\scripts)
         String userHome = System.getProperty("user.home");
         Path scriptDir = Paths.get(userHome, ".petools", "scripts");
+
+        // 2. Ensure the directory exists
+        try {
+            if (!Files.exists(scriptDir)) {
+                Files.createDirectories(scriptDir);
+            }
+            Path scriptPath = scriptDir.resolve("address_to_scr.exe");
+            // 3. If the .exe is missing, copy it from inside the App (JAR)
+            if (!Files.exists(scriptPath)) {
+                // "scripts/address_to_scr.exe" must match the path inside src/main/resources
+                try (InputStream in = getClass().getResourceAsStream("/scripts/address_to_scr.exe")) {
+                    if (in != null) {
+                        Files.copy(in, scriptPath, StandardCopyOption.REPLACE_EXISTING);
+                        System.out.println("Restored missing script: " + scriptPath);
+                    } else {
+                        System.err.println("Could not find script inside JAR!");
+                    }
+                }
+            }
+        } catch (IOException e) {}
+
         String safeScriptPath = scriptDir.toAbsolutePath().toString();
 
         Button openScriptFolder = new Button("Open Scripts Folder");
