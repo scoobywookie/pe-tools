@@ -1,8 +1,9 @@
 package com.petools.features.settings;
 
 import java.awt.Desktop;
-import java.io.File;
 import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.nio.file.Paths;
 
 import javafx.geometry.Insets;
@@ -39,27 +40,28 @@ public class SettingsView extends VBox {
             createInfoRow("Java Version:", System.getProperty("java.version"))
         );
 
-        // --- Section 2: Diagnostics (Crucial for your Scripts) ---
+        // --- Section 2: Diagnostics (Fixed for Installer) ---
         VBox diagSection = new VBox(10);
         diagSection.setStyle("-fx-background-color: white; -fx-padding: 20; -fx-effect: dropshadow(three-pass-box, rgba(0,0,0,0.1), 0, 0, 0, 1); -fx-background-radius: 5;");
 
         Label diagLabel = new Label("System Paths & Diagnostics");
         diagLabel.setStyle("-fx-font-size: 16px; -fx-font-weight: bold;");
 
-        // Calculate paths to show the user
+        // Use the Safe User Home Folder for Scripts
+        // (C:\Users\Name\.petools\scripts)
         String userHome = System.getProperty("user.home");
-        String currentDir = Paths.get("").toAbsolutePath().toString();
-        String scriptPath = Paths.get("scripts", "address_to_scr.exe").toAbsolutePath().toString();
+        Path scriptDir = Paths.get(userHome, ".petools", "scripts");
+        String safeScriptPath = scriptDir.toAbsolutePath().toString();
 
         Button openScriptFolder = new Button("Open Scripts Folder");
-        openScriptFolder.setOnAction(e -> openFolder(Paths.get("scripts").toFile()));
+        openScriptFolder.setOnAction(e -> openFolder(scriptDir));
 
         diagSection.getChildren().addAll(
             diagLabel,
             new Separator(),
             createInfoRow("User Home:", userHome),
-            createInfoRow("Working Directory:", currentDir),
-            createInfoRow("Expected Script Path:", scriptPath),
+            createInfoRow("Safe Scripts Path:", safeScriptPath),
+            new Label("(Drop your .exe / .py scripts here so they persist after updates)"),
             new Label(""), // spacer
             openScriptFolder
         );
@@ -77,10 +79,15 @@ public class SettingsView extends VBox {
         return new HBox(10, l, v);
     }
 
-    private void openFolder(File file) {
+    private void openFolder(Path path) {
         try {
-            if (Desktop.isDesktopSupported() && file.exists()) {
-                Desktop.getDesktop().open(file);
+            // 1. Create directory if it doesn't exist
+            if (!Files.exists(path)) {
+                Files.createDirectories(path);
+            }
+            // 2. Open in Windows Explorer
+            if (Desktop.isDesktopSupported()) {
+                Desktop.getDesktop().open(path.toFile());
             }
         } catch (IOException e) {}
     }
