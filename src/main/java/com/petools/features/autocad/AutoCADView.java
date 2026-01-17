@@ -40,6 +40,11 @@ public class AutoCADView extends VBox {
         this.setPadding(new Insets(30));
         this.setStyle("-fx-background-color: #F9FBFD;");
 
+        consoleLog = new TextArea();
+        consoleLog.setEditable(false);
+        consoleLog.setStyle("-fx-font-family: 'Consolas', monospace; -fx-control-inner-background: #2b2b2b; -fx-text-fill: #00ff00;");
+        consoleLog.setText("System Ready.\n");
+
         // --- Header ---
         Label header = new Label("AutoCAD Automation Dashboard");
         header.setStyle("-fx-font-size: 24px; -fx-font-weight: bold; -fx-text-fill: #333;");
@@ -115,10 +120,6 @@ public class AutoCADView extends VBox {
         Label logLabel = new Label("Automation Log");
         logLabel.setStyle("-fx-font-weight: bold;");
 
-        consoleLog = new TextArea();
-        consoleLog.setEditable(false);
-        consoleLog.setStyle("-fx-font-family: 'Consolas', monospace; -fx-control-inner-background: #2b2b2b; -fx-text-fill: #00ff00;");
-        consoleLog.setText("System Ready.\n");
 
         logSection.getChildren().addAll(logLabel, consoleLog);
 
@@ -128,24 +129,51 @@ public class AutoCADView extends VBox {
 
     private void ensureScriptExists() {
         try {
-            // 1. Create folder if missing
+            // --- 1. HANDLE THE EXE (Always Overwrite) ---
             if (!Files.exists(SCRIPT_DIR)) {
                 Files.createDirectories(SCRIPT_DIR);
             }
 
-            // 2. If .exe is missing, extract it from the JAR
-            if (!Files.exists(SCRIPT_PATH)) {
-                try (InputStream in = getClass().getResourceAsStream("/scripts/address_to_scr.exe")) {
+            // WE DELETED THE "IF EXISTS" CHECK HERE
+            // Now we force-copy the new file every single time the app starts.
+            try (InputStream in = getClass().getResourceAsStream("/scripts/address_to_scr.exe")) {
+                if (in != null) {
+                    Files.copy(in, SCRIPT_PATH, StandardCopyOption.REPLACE_EXISTING);
+                    log("✅ Automation engine updated to latest version.");
+                } else {
+                    log("ERROR: Could not find .exe in JAR!");
+                }
+            }
+
+            // --- 2. HANDLE THE IPF (On Desktop) ---
+            String userHome = System.getProperty("user.home");
+            Path desktopImports = Paths.get(userHome, "Desktop", "CAD-IMPORTS");
+            Path ipfPath = desktopImports.resolve("gis data.ipf");
+
+            if (!Files.exists(desktopImports)) {
+                Files.createDirectories(desktopImports);
+            }
+
+            // We only copy the IPF if it's missing (to avoid overwriting user settings)
+            if (!Files.exists(ipfPath)) {
+                try (InputStream in = getClass().getResourceAsStream("/scripts/gis data.ipf")) {
                     if (in != null) {
-                        Files.copy(in, SCRIPT_PATH, StandardCopyOption.REPLACE_EXISTING);
-                        log("Restored missing automation script.");
+                        Files.copy(in, ipfPath, StandardCopyOption.REPLACE_EXISTING);
+                        log("Restored missing GIS profile.");
                     } else {
-                        log("ERROR: Could not find script inside app resources!");
+                        // Fallback: try finding it without the /scripts/ prefix if needed
+                        try (InputStream in2 = getClass().getResourceAsStream("/gis data.ipf")) {
+                            if (in2 != null) {
+                                Files.copy(in2, ipfPath, StandardCopyOption.REPLACE_EXISTING);
+                                log("Restored missing GIS profile.");
+                            }
+                        }
                     }
                 }
             }
+
         } catch (IOException e) {
-            log("Error checking script: " + e.getMessage());
+            log("Error updating files: " + e.getMessage());
         }
     }
 

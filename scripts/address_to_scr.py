@@ -10,6 +10,9 @@ import sys
 import os
 import io
 
+import fiona
+import shapely
+
 sys.stdout.reconfigure(encoding='utf-8')
 
 # --- 1. DYNAMIC PATH SETUP ---
@@ -42,13 +45,13 @@ def get_coords_nconemap(address):
     try:
         geolocator = Nominatim(user_agent="city_county_lookup_combined")
         geo_result = geolocator.geocode(address, addressdetails=True)
-        
+
         city = county = None
         if geo_result and 'address' in geo_result.raw:
             addr = geo_result.raw['address']
             city = addr.get('city') or addr.get('town') or addr.get('village') or addr.get('hamlet')
             county = addr.get('county')
-        
+
         # Next, get x and y from NC OneMap (ArcGIS)
         url = "https://geocode.arcgis.com/arcgis/rest/services/World/GeocodeServer/findAddressCandidates"
         params = {
@@ -73,7 +76,7 @@ def generate_script(x, y, shapefile_paths):
     radius = 5000
     # Save script to the dynamic Output Folder
     script_path = os.path.join(OUTPUT_FOLDER, "circle_layers.scr")
-    
+
     # Path to the import profile (Assumes it lives in the same folder, or you can hardcode a shared network path)
     # If the .ipf file doesn't exist, Civil 3D might prompt the user, so be aware.
     ipf_path = os.path.join(OUTPUT_FOLDER, "gis data.ipf")
@@ -81,14 +84,14 @@ def generate_script(x, y, shapefile_paths):
     try:
         if os.path.exists(script_path):
             os.remove(script_path)
-            
+
         with open(script_path, "w") as f:
             f.write("CIRCLE\n")
             f.write(f"{x},{y}\n")
             f.write(f"{radius}\n")
             f.write(f"ZOOM\nC\n{x},{y}\n{2 * radius}\n")
-            
-            # Note: The original logic had a specific block for the first item. 
+
+            # Note: The original logic had a specific block for the first item.
             # I kept the logic but updated the paths.
             if len(shapefile_paths) > 0:
                 f.write(f"-MAPIMPORT\n")
@@ -96,22 +99,22 @@ def generate_script(x, y, shapefile_paths):
                 f.write(f"{shapefile_paths[0]}\n") # This path is now dynamic
                 f.write("yes\n")
                 # Using dynamic IPF path (ensure this file exists on Dad's computer or remove this line)
-                f.write(f"{ipf_path}\n") 
+                f.write(f"{ipf_path}\n")
                 f.write("proceed\n")
                 f.write('(load "apply_topo_elevation.lsp") AssignTopoElevation\n')
-            
+
             for shp in shapefile_paths:
                 # Avoid re-importing the first one if logic overlaps, but keeping your original loop structure
-                if "topo" not in shp: 
+                if "topo" not in shp:
                     f.write(f"-MAPIMPORT\n")
                     f.write(f"shp\n")
                     f.write(f"{shp}\n")
                     f.write("yes\n")
                     f.write(f"{ipf_path}\n")
                     f.write("proceed\n")
-            
+
             f.write('(load "enable_linetype_generation.lsp") EnableLinetypeGeneration\n')
-            
+
         print(f"📁 Script generated: {script_path}")
     except Exception as e:
         print(f"❌ Failed to write script: {e}")
@@ -119,15 +122,15 @@ def generate_script(x, y, shapefile_paths):
 def get_layer(x, y, layer_name, url):
     # print(" " * 80, end='\r') # Removed clear line for Java console compatibility
     print(f"📦 Fetching layer: {layer_name.split('s')[0]}")
-    
+
     total_collected = 0
     # Save Shapefile to dynamic Output Folder
     out_path = os.path.join(OUTPUT_FOLDER, f"{layer_name}.shp")
-    
+
     offset = 0
     limit = 2000
     all_gdfs = []
-    
+
     while True:
         params = {
             "geometry": f"{x-5000},{y-5000},{x+5000},{y+5000}",
@@ -142,50 +145,60 @@ def get_layer(x, y, layer_name, url):
         try:
             response = requests.get(url, params=params)
             response.raise_for_status()
+
+            # --- DEBUG: CHECK SERVER RESPONSE ---
+            # print(f"   🔎 Server Response: {response.text[:100]}...") 
+
         except requests.exceptions.RequestException as e:
             print(f"❌ Failed to retrieve {layer_name} data.")
             return None
-    
+
         try:
             # Check if response is valid JSON before parsing geometry
             if "error" in response.text:
-                 print(f"❌ API Error for {layer_name}")
-                 return None
-                 
-            gdf = gpd.read_file(io.StringIO(response.text))
+                print(f"❌ API Error for {layer_name}: {response.text}")
+                return None
+
+            gdf = gpd.read_file(io.StringIO(response.text), engine = "fiona")
+
+            # --- DEBUG: CHECK EMPTY DATAFRAME ---
+            if gdf.empty:
+                # print(f"   ⚠️ GeoDataFrame is EMPTY. (Found 0 features)")
+                pass
+
         except Exception as e:
-            # Often happens if no features are found
-            # print(f"ℹ️ No features or read error for {layer_name}")
+            # This will catch if GeoPandas is missing a driver or fails to parse
+            print(f"❌ Parsing Error for {layer_name}: {e}")
             return None
 
         if gdf.empty:
             return None
-        
+
         all_gdfs.append(gdf)
         count = len(gdf)
         total_collected += count
-        
+
         # Simple progress for Java Console
         if total_collected % 500 == 0:
             print(f"   ... {total_collected} items found")
-            
+
         if count < limit:
             break
         offset += limit
-    
+
     if not all_gdfs:
         print(f"⚠️ No {layer_name} features found.")
         return None
-    
+
     try:
         final_gdf = pd.concat(all_gdfs, ignore_index=True)
         if not final_gdf.is_valid.all():
             final_gdf["geometry"] = final_gdf.buffer(0)
-            
+
         # Fix Date Columns
         for col in final_gdf.select_dtypes(include=['datetime64[ns]', 'datetime64[ns, UTC]']).columns:
             final_gdf[col] = final_gdf[col].apply(lambda v: v.date() if pd.notna(v) and hasattr(v, 'date') else v)
-        
+
         # Truncate Column Names (Shapefile limit 10 chars)
         cleaned_truncated_columns = [col.lower().replace("__", "_")[:10] for col in final_gdf.columns]
         final_gdf.columns = cleaned_truncated_columns
@@ -211,14 +224,14 @@ def get_layer(x, y, layer_name, url):
         final_gdf.to_file(out_path, driver="ESRI Shapefile", encoding='utf-8')
         print(f"✅ Saved: {out_path}")
         return out_path
-        
+
     except Exception as e:
         print(f"❌ Save Failed for {layer_name}: {e}")
         return None
 
 def get_urls(city, county):
     if not city or not county: return {}
-    
+
     city = city.lower()
     county = county.lower()
 
@@ -264,7 +277,7 @@ def get_urls(city, county):
 
 if __name__ == "__main__":
     suppress_warnings()
-    
+
     # --- NON-BLOCKING INPUT HANDLING ---
     if len(sys.argv) >= 2:
         address = sys.argv[1]
@@ -272,30 +285,30 @@ if __name__ == "__main__":
         # Fallback for manual testing only
         print("Enter address as argument.")
         sys.exit(1)
-        
-    address += ", NC" 
+
+    address += ", NC"
 
     x, y, city, county = get_coords_nconemap(address)
 
     if x is None or y is None:
         print("❌ Address not found.")
         sys.exit(1) # Exit with error code for Java to catch
-    
+
     if city is None or county is None:
         print("⚠️ City/County not identified.")
         sys.exit(0)
 
     print(f"📍 Location: {city.title()}, {county.title()}")
     print(f"✅ Coordinates: X={x}, Y={y}")
-    
+
     # Check for "download layers" flag from Java
-    download_map_layers = "n"
+    download_map_layers = "false"
     if len(sys.argv) >= 3:
         download_map_layers = sys.argv[2] # "y" or "n" passed from Java
 
     shapefile_paths = []
-    
-    if download_map_layers.strip().lower().startswith('y'):
+
+    if download_map_layers == "true" or download_map_layers.strip().lower().startswith('y'):
         urls = get_urls(city, county)
         if urls:
             for layer_name, url in urls.items():
