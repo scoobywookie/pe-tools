@@ -1,8 +1,11 @@
 # Daniel Puckett & Joe Puckett | Place Engineering, PLLC
-# v1.5 - Updated for Java Automation
+# v2.0.0 - 1/19/2026 (Java Integration + Robust GIS Fusion)
 # This script is "Frozen" ready for PyInstaller (.exe conversion)
+# Combines Java I/O structure with Production-Grade GIS Fetching
 
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 from geopy.geocoders import Nominatim
 import geopandas as gpd
 import pandas as pd
@@ -10,13 +13,8 @@ import sys
 import os
 import io
 
-import fiona
-import shapely
-
-sys.stdout.reconfigure(encoding='utf-8')
-
-# --- 1. DYNAMIC PATH SETUP ---
-# Detect User Desktop automatically
+# --- 1. DYNAMIC PATH SETUP (For Java/Exe Compatibility) ---
+# Detect User Desktop automatically to avoid hardcoded "Daniel" paths
 USER_DESKTOP = os.path.join(os.path.expanduser("~"), "Desktop")
 OUTPUT_FOLDER = os.path.join(USER_DESKTOP, "CAD-IMPORTS")
 
@@ -25,93 +23,251 @@ if not os.path.exists(OUTPUT_FOLDER):
     try:
         os.makedirs(OUTPUT_FOLDER)
     except OSError:
-        pass # Handle potential race conditions
+        pass
+
+# Reconfigure stdout for Java ProcessBuilder to read UTF-8 correctly
+# ENABLE LINE BUFFERING (Fixes the "Wait until the end" lag)
+sys.stdout.reconfigure(encoding='utf-8', line_buffering=True)
 
 def suppress_warnings():
     import warnings
-    warnings.filterwarnings("ignore", message=".*attribute name.*")
-    warnings.filterwarnings("ignore", message=".*truncated when saved to ESRI Shapefile.*")
-    warnings.filterwarnings("ignore", message=".*created as date field.*")
-    warnings.filterwarnings("ignore", message=".*Normalized/laundered field name.*")
-    warnings.filterwarnings("ignore", message=".*Field UPDATE_DAT.*")
-    warnings.filterwarnings("ignore", message=".*update_dat.*")
-    try:
-        warnings.filterwarnings("ignore", message="Field .* create as date field, though DateTime requested.", category=RuntimeWarning, module="pyogrio\\.raw")
-        warnings.filterwarnings("ignore", message=".*not successfully written.*", category=UserWarning, module="pyogrio.raw")
-    except:
-        pass
+    warnings.filterwarnings("ignore")
+
+# --- 2. ENGINEERING GRADE SESSION (Handles Connection Drops) ---
+def get_session():
+    session = requests.Session()
+    # Retry 3 times on connection errors (Fixes 10054 errors on hosted servers)
+    retries = Retry(total=3, backoff_factor=1, status_forcelist=[500, 502, 503, 504])
+    adapter = HTTPAdapter(max_retries=retries)
+    session.mount('http://', adapter)
+    session.mount('https://', adapter)
+    # Browser header to avoid 403 blocks
+    session.headers.update({'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'})
+    return session
 
 def get_coords_nconemap(address):
+    geolocator = Nominatim(user_agent="city_county_lookup_combined")
     try:
-        geolocator = Nominatim(user_agent="city_county_lookup_combined")
         geo_result = geolocator.geocode(address, addressdetails=True)
-
-        city = county = None
-        if geo_result and 'address' in geo_result.raw:
-            addr = geo_result.raw['address']
-            city = addr.get('city') or addr.get('town') or addr.get('village') or addr.get('hamlet')
-            county = addr.get('county')
-
-        # Next, get x and y from NC OneMap (ArcGIS)
-        url = "https://geocode.arcgis.com/arcgis/rest/services/World/GeocodeServer/findAddressCandidates"
-        params = {
-            "SingleLine": address,
-            "f": "json",
-            "outSR": "2264",  # NC State Plane (ftUS)
-            "maxLocations": 1
-        }
-        response = requests.get(url, params=params)
-        data = response.json()
-
-        if data.get('candidates'):
-            location = data['candidates'][0]['location']
-            return location['x'], location['y'], city, county
-    except Exception as e:
-        print(f"❌ Geocoding Error: {e}")
+    except:
         return None, None, None, None
 
+    city = county = None
+    if geo_result and 'address' in geo_result.raw:
+        addr = geo_result.raw['address']
+        city = addr.get('city') or addr.get('town') or addr.get('village')
+        county = addr.get('county')
+
+    url = "https://geocode.arcgis.com/arcgis/rest/services/World/GeocodeServer/findAddressCandidates"
+    params = {"SingleLine": address, "f": "json", "outSR": "2264", "maxLocations": 1}
+
+    session = get_session()
+    try:
+        response = session.get(url, params=params, timeout=10)
+        data = response.json()
+        if data['candidates']:
+            location = data['candidates'][0]['location']
+            return location['x'], location['y'], city, county
+    except:
+        pass
     return None, None, city, county
+
+def get_layer(x, y, layer_name, urls_list):
+    print(f"📦 Fetching layer: {layer_name.title()}")
+
+    if isinstance(urls_list, str): urls_list = [urls_list]
+    out_path = os.path.join(OUTPUT_FOLDER, f"{layer_name}.shp")
+    session = get_session()
+
+    # --- ACTIVE FAILOVER LOOP ---
+    for url in urls_list:
+        offset = 0
+        limit = 2000
+        all_gdfs = []
+        failed_this_url = False
+
+        while True:
+            params = {
+                "geometry": f"{x-5000},{y-5000},{x+5000},{y+5000}",
+                "geometryType": "esriGeometryEnvelope",
+                "inSR": 2264,
+                "spatialRel": "esriSpatialRelIntersects",
+                "outFields": "*",
+                "returnGeometry": True,
+                "resultOffset": offset,
+                "f": "json"
+            }
+            try:
+                response = session.get(url, params=params, timeout=30)
+
+                if response.status_code != 200:
+                    failed_this_url = True; break
+
+                data = response.json()
+                if "features" not in data or not data["features"]:
+                    break
+
+                # --- CRITICAL FIX: Manual EsriJSON -> GeoJSON Translation ---
+                # This prevents the 'NoneType' crash and handles messy data
+                clean_features = []
+                for feat in data["features"]:
+                    attrs = feat.get("attributes", {})
+                    clean_attrs = {}
+                    for k, v in attrs.items():
+                        if k is None or k == "": clean_attrs["field"] = v
+                        else: clean_attrs[str(k)] = v
+
+                    geom = feat.get("geometry")
+                    if geom:
+                        if "paths" in geom:
+                            geom["type"] = "MultiLineString"
+                            geom["coordinates"] = geom.pop("paths")
+                        elif "rings" in geom:
+                            geom["type"] = "Polygon"
+                            geom["coordinates"] = geom.pop("rings")
+                        elif "x" in geom and "y" in geom:
+                            geom["type"] = "Point"
+                            geom["coordinates"] = [geom["x"], geom["y"]]
+
+                    clean_features.append({
+                        "type": "Feature", "geometry": geom, "properties": clean_attrs
+                    })
+
+                gdf = gpd.GeoDataFrame.from_features(clean_features, crs="EPSG:2264")
+                if gdf.empty: break
+
+                all_gdfs.append(gdf)
+                count = len(gdf)
+
+                # Java Console Progress Update
+                if sum(len(g) for g in all_gdfs) > 0:
+                    print(f"   ... {sum(len(g) for g in all_gdfs)} items found")
+
+                if count < limit: break
+                offset += limit
+
+            except Exception:
+                failed_this_url = True
+                break
+
+        if failed_this_url: continue
+        if not all_gdfs: continue
+
+        # Success! Process and Save
+        final_gdf = pd.concat(all_gdfs, ignore_index=True)
+        if not final_gdf.is_valid.all(): final_gdf["geometry"] = final_gdf.buffer(0)
+
+        for col in final_gdf.select_dtypes(include=['datetime64[ns]', 'datetime64[ns, UTC]']).columns:
+            final_gdf[col] = final_gdf[col].apply(lambda v: v.date() if pd.notna(v) and hasattr(v, 'date') else v)
+
+        # Truncate & Dedup Columns
+        final_gdf.columns = [(str(col).lower() if col is not None else "field").replace("__", "_")[:10] for col in final_gdf.columns]
+
+        final_cols = []
+        col_counts = {}
+        for col in final_gdf.columns:
+            if col in col_counts:
+                col_counts[col] += 1
+                suffix = str(col_counts[col])
+                final_cols.append(col[:10-len(suffix)-1] + "_" + suffix)
+            else:
+                col_counts[col] = 0
+                final_cols.append(col)
+        final_gdf.columns = final_cols
+
+        try:
+            final_gdf.to_file(out_path, driver="ESRI Shapefile", encoding='utf-8')
+            print(f"✅ Saved: {out_path}")
+            return out_path
+        except Exception as e:
+            print(f"❌ Failed to save {layer_name}: {e}")
+            return None
+
+    print(f"⚠️ No features found for {layer_name}")
+    return None
+
+def get_urls(city, county):
+    if not city or not county: return {}
+    city = city.lower()
+    county = county.lower()
+
+    # --- HYBRID CONFIG (Updated for 2026 Reliability) ---
+
+    parcels_urls = [
+        "https://maps.wake.gov/arcgis/rest/services/Property/Parcels/FeatureServer/0/query",
+        "https://services.nconemap.gov/secure/rest/services/NC1Map_Parcels/MapServer/0/query"
+    ]
+
+    roads_urls = [
+        "https://services.arcgis.com/v400IkDOw1ad7Yad/arcgis/rest/services/Roads/FeatureServer/0/query",
+        "https://maps.wake.gov/arcgis/rest/services/Transportation/Streets/MapServer/0/query",
+        "https://services.nconemap.gov/secure/rest/services/NC1Map_Transportation/MapServer/0/query"
+    ]
+
+    buildings_urls = [
+        "https://maps.wake.gov/arcgis/rest/services/Property/BuildingFootprints/MapServer/0/query",
+        "https://services.nconemap.gov/secure/rest/services/NC1Map_Buildings_2024/MapServer/0/query",
+        "https://services.arcgis.com/v400IkDOw1ad7Yad/arcgis/rest/services/Building_Footprints/FeatureServer/0/query"
+    ]
+
+    stream_urls = [
+        "https://services1.arcgis.com/a7CWfuGP5ZnLYE7I/arcgis/rest/services/USGSBlueLineStreams/FeatureServer/0/query",
+        "https://services.nconemap.gov/secure/rest/services/NC1Map_Hydrography/MapServer/1/query",
+        "https://maps.wake.gov/arcgis/rest/services/Environmental/Hydrography/MapServer/0/query"
+    ]
+
+    parking_urls = [
+        "https://services.arcgis.com/v400IkDOw1ad7Yad/arcgis/rest/services/Parking_Areas/FeatureServer/0/query",
+        "https://maps.raleighnc.gov/arcgis/rest/services/Planning/Parking/MapServer/0/query"
+    ]
+
+    vegetation_urls = ["https://services.arcgis.com/v400IkDOw1ad7Yad/arcgis/rest/services/Vegetation_Outlines/FeatureServer/0/query"]
+
+    # --- NEW LAYERS (Driveways + Sidewalks) ---
+    sidewalks_urls = ["https://services.arcgis.com/v400IkDOw1ad7Yad/arcgis/rest/services/City_Of_Raleigh_Sidewalks_14_view/FeatureServer/0/query"]
+    driveways_urls = ["https://services.arcgis.com/v400IkDOw1ad7Yad/arcgis/rest/services/Miscellaneous_Planimetric_Features/FeatureServer/0/query"]
+
+    topo_urls = []
+    if "raleigh" in city:
+        topo_urls.append("https://maps.raleighnc.gov/hosted/rest/services/Hosted/Raleigh_Topography/FeatureServer/0/query")
+
+    return {
+        'parcels': parcels_urls,
+        'roads': roads_urls,
+        'buildings': buildings_urls,
+        'stream': stream_urls,
+        'parking': parking_urls,
+        'vegetation': vegetation_urls,
+        'driveways': driveways_urls,
+        'sidewalks': sidewalks_urls,
+        'topo': topo_urls if topo_urls else None
+    }
 
 def generate_script(x, y, shapefile_paths):
     radius = 5000
-    # Save script to the dynamic Output Folder
     script_path = os.path.join(OUTPUT_FOLDER, "circle_layers.scr")
-
-    # Path to the import profile (Assumes it lives in the same folder, or you can hardcode a shared network path)
-    # If the .ipf file doesn't exist, Civil 3D might prompt the user, so be aware.
+    # Dynamic IPF path assuming it lives in the same folder
     ipf_path = os.path.join(OUTPUT_FOLDER, "gis data.ipf")
 
     try:
-        if os.path.exists(script_path):
-            os.remove(script_path)
-
         with open(script_path, "w") as f:
             f.write("CIRCLE\n")
             f.write(f"{x},{y}\n")
             f.write(f"{radius}\n")
             f.write(f"ZOOM\nC\n{x},{y}\n{2 * radius}\n")
 
-            # Note: The original logic had a specific block for the first item.
-            # I kept the logic but updated the paths.
-            if len(shapefile_paths) > 0:
-                f.write(f"-MAPIMPORT\n")
-                f.write(f"shp\n")
-                f.write(f"{shapefile_paths[0]}\n") # This path is now dynamic
-                f.write("yes\n")
-                # Using dynamic IPF path (ensure this file exists on Dad's computer or remove this line)
-                f.write(f"{ipf_path}\n")
-                f.write("proceed\n")
+            def write_import(path):
+                f.write(f"-MAPIMPORT\nshp\n{path}\nyes\n")
+                f.write(f"{ipf_path}\nproceed\n")
+
+            topo_layer = next((s for s in shapefile_paths if "topo" in s.lower()), None)
+            if topo_layer:
+                write_import(topo_layer)
                 f.write('(load "apply_topo_elevation.lsp") AssignTopoElevation\n')
 
             for shp in shapefile_paths:
-                # Avoid re-importing the first one if logic overlaps, but keeping your original loop structure
-                if "topo" not in shp:
-                    f.write(f"-MAPIMPORT\n")
-                    f.write(f"shp\n")
-                    f.write(f"{shp}\n")
-                    f.write("yes\n")
-                    f.write(f"{ipf_path}\n")
-                    f.write("proceed\n")
+                if "topo" not in shp.lower():
+                    write_import(shp)
 
             f.write('(load "enable_linetype_generation.lsp") EnableLinetypeGeneration\n')
 
@@ -119,208 +275,49 @@ def generate_script(x, y, shapefile_paths):
     except Exception as e:
         print(f"❌ Failed to write script: {e}")
 
-def get_layer(x, y, layer_name, url):
-    # print(" " * 80, end='\r') # Removed clear line for Java console compatibility
-    print(f"📦 Fetching layer: {layer_name.split('s')[0]}")
-
-    total_collected = 0
-    # Save Shapefile to dynamic Output Folder
-    out_path = os.path.join(OUTPUT_FOLDER, f"{layer_name}.shp")
-
-    offset = 0
-    limit = 2000
-    all_gdfs = []
-
-    while True:
-        params = {
-            "geometry": f"{x-5000},{y-5000},{x+5000},{y+5000}",
-            "geometryType": "esriGeometryEnvelope",
-            "inSR": 2264,
-            "spatialRel": "esriSpatialRelIntersects",
-            "outFields": "*",
-            "returnGeometry": True,
-            "resultOffset": offset,
-            "f": "json"
-        }
-        try:
-            response = requests.get(url, params=params)
-            response.raise_for_status()
-
-            # --- DEBUG: CHECK SERVER RESPONSE ---
-            # print(f"   🔎 Server Response: {response.text[:100]}...") 
-
-        except requests.exceptions.RequestException as e:
-            print(f"❌ Failed to retrieve {layer_name} data.")
-            return None
-
-        try:
-            # Check if response is valid JSON before parsing geometry
-            if "error" in response.text:
-                print(f"❌ API Error for {layer_name}: {response.text}")
-                return None
-
-            gdf = gpd.read_file(io.StringIO(response.text), engine = "fiona")
-
-            # --- DEBUG: CHECK EMPTY DATAFRAME ---
-            if gdf.empty:
-                # print(f"   ⚠️ GeoDataFrame is EMPTY. (Found 0 features)")
-                pass
-
-        except Exception as e:
-            # This will catch if GeoPandas is missing a driver or fails to parse
-            print(f"❌ Parsing Error for {layer_name}: {e}")
-            return None
-
-        if gdf.empty:
-            return None
-
-        all_gdfs.append(gdf)
-        count = len(gdf)
-        total_collected += count
-
-        # Simple progress for Java Console
-        if total_collected % 500 == 0:
-            print(f"   ... {total_collected} items found")
-
-        if count < limit:
-            break
-        offset += limit
-
-    if not all_gdfs:
-        print(f"⚠️ No {layer_name} features found.")
-        return None
-
-    try:
-        final_gdf = pd.concat(all_gdfs, ignore_index=True)
-        if not final_gdf.is_valid.all():
-            final_gdf["geometry"] = final_gdf.buffer(0)
-
-        # Fix Date Columns
-        for col in final_gdf.select_dtypes(include=['datetime64[ns]', 'datetime64[ns, UTC]']).columns:
-            final_gdf[col] = final_gdf[col].apply(lambda v: v.date() if pd.notna(v) and hasattr(v, 'date') else v)
-
-        # Truncate Column Names (Shapefile limit 10 chars)
-        cleaned_truncated_columns = [col.lower().replace("__", "_")[:10] for col in final_gdf.columns]
-        final_gdf.columns = cleaned_truncated_columns
-
-        # De-duplicate columns
-        final_cols = []
-        col_counts = {}
-        for col in final_gdf.columns:
-            current_name = col
-            if current_name in col_counts:
-                col_counts[current_name] += 1
-                suffix = str(col_counts[current_name])
-                base_len = 10 - len(suffix) -1
-                if base_len < 1:
-                    current_name = col[:10-len(suffix)] + suffix
-                else:
-                    current_name = col[:base_len] + suffix
-            else:
-                col_counts[current_name] = 0
-            final_cols.append(current_name)
-        final_gdf.columns = final_cols
-
-        final_gdf.to_file(out_path, driver="ESRI Shapefile", encoding='utf-8')
-        print(f"✅ Saved: {out_path}")
-        return out_path
-
-    except Exception as e:
-        print(f"❌ Save Failed for {layer_name}: {e}")
-        return None
-
-def get_urls(city, county):
-    if not city or not county: return {}
-
-    city = city.lower()
-    county = county.lower()
-
-    if "wake" in county:
-        if "raleigh" in city:
-            return {
-                'topo': "https://maps.raleighnc.gov/hosted/rest/services/Hosted/Raleigh_Topography/FeatureServer/0/query",
-                'parcels': "https://maps.wake.gov/arcgis/rest/services/Property/Parcels/FeatureServer/0/query",
-                'roads': "https://services.arcgis.com/v400IkDOw1ad7Yad/arcgis/rest/services/Roads/FeatureServer/0/query",
-                'buildings': "https://services.arcgis.com/v400IkDOw1ad7Yad/arcgis/rest/services/Building_Footprints/FeatureServer/0/query",
-                'parking': "https://services.arcgis.com/v400IkDOw1ad7Yad/arcgis/rest/services/Parking_Areas/FeatureServer/0/query",
-                'vegetation': "https://services.arcgis.com/v400IkDOw1ad7Yad/arcgis/rest/services/Vegetation_Outlines/FeatureServer/0/query",
-                'stream': "https://services1.arcgis.com/a7CWfuGP5ZnLYE7I/arcgis/rest/services/USGSBlueLineStreams/FeatureServer/0/query",
-            }
-        elif "cary" in city:
-            return {
-                'topo': "https://maps.townofcary.org/arcgis/rest/services/Topography/Topography/MapServer/11/query",
-            }
-        else:
-            return {
-                'parcels': "https://maps.wake.gov/arcgis/rest/services/Property/Parcels/FeatureServer/0/query",
-                'stream': "https://services1.arcgis.com/a7CWfuGP5ZnLYE7I/arcgis/rest/services/USGSBlueLineStreams/FeatureServer/0/query",
-            }
-    elif "durham" in county:
-        return {
-            'parcels': "https://gisweb.durhamnc.gov/arcgis/rest/services/Property/Parcels/FeatureServer/0/query",
-            'stream': "https://services.arcgis.com/kTR3K8S9ke3XQfd6/arcgis/rest/services/Durham_Stream/FeatureServer/0/query",
-        }
-    elif "johnston" in county:
-        return {
-            'parcels': "https://gis.johnstonnc.com/arcgis/rest/services/Parcels/FeatureServer/0/query",
-            'stream': "https://services1.arcgis.com/a7CWfuGP5ZnLYE7I/arcgis/rest/services/USGSBlueLineStreams/FeatureServer/0/query",
-        }
-    elif "nash" in county:
-        return {
-            'parcels': "https://maps.nashville.gov/arcgis/rest/services/Parcels/FeatureServer/0/query",
-            'stream': "https://services1.arcgis.com/a7CWfuGP5ZnLYE7I/arcgis/rest/services/USGSBlueLineStreams/FeatureServer/0/query",
-        }
-    else:
-        return {
-            'stream': "https://services1.arcgis.com/a7CWfuGP5ZnLYE7I/arcgis/rest/services/USGSBlueLineStreams/FeatureServer/0/query"
-        }
-
 if __name__ == "__main__":
     suppress_warnings()
 
-    # --- NON-BLOCKING INPUT HANDLING ---
+    # --- JAVA / CLI INPUT HANDLING ---
     if len(sys.argv) >= 2:
         address = sys.argv[1]
     else:
-        # Fallback for manual testing only
         print("Enter address as argument.")
         sys.exit(1)
 
     address += ", NC"
-
     x, y, city, county = get_coords_nconemap(address)
 
-    if x is None or y is None:
+    if x is None:
         print("❌ Address not found.")
-        sys.exit(1) # Exit with error code for Java to catch
+        sys.exit(1)
 
-    if city is None or county is None:
+    if not city or not county:
         print("⚠️ City/County not identified.")
         sys.exit(0)
 
     print(f"📍 Location: {city.title()}, {county.title()}")
     print(f"✅ Coordinates: X={x}, Y={y}")
 
-    # Check for "download layers" flag from Java
-    download_map_layers = "false"
+    # Java passes "y", "true", or nothing
+    dl_arg = "false"
     if len(sys.argv) >= 3:
-        download_map_layers = sys.argv[2] # "y" or "n" passed from Java
+        dl_arg = sys.argv[2].strip().lower()
 
-    shapefile_paths = []
-
-    if download_map_layers == "true" or download_map_layers.strip().lower().startswith('y'):
+    paths = []
+    if dl_arg == "true" or dl_arg.startswith('y'):
         urls = get_urls(city, county)
-        if urls:
-            for layer_name, url in urls.items():
-                res = get_layer(x, y, layer_name, url)
-                if res:
-                    shapefile_paths.append(res)
+        if not urls:
+            print("⚠️ No data sources for this location.")
         else:
-            print("⚠️ No data sources for this county.")
+            for name, url_list in urls.items():
+                if not url_list: continue
+                shp = get_layer(x, y, name, url_list)
+                if shp: paths.append(shp)
     else:
         print("⚠️ Skipping layer downloads per request.")
 
-    generate_script(x, y, shapefile_paths)
+    generate_script(x, y, paths)
 
-    print("DONE") # Signal to Java
+    print("DONE") # Signal for Java ProcessBuilder
     sys.exit(0)

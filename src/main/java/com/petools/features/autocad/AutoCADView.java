@@ -10,7 +10,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
-import java.time.LocalDateTime;
+import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
 
 import javafx.application.Platform;
@@ -21,6 +21,7 @@ import javafx.scene.control.Label;
 import javafx.scene.control.Separator;
 import javafx.scene.control.TextArea;
 import javafx.scene.control.TextField;
+import javafx.scene.input.KeyCode;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.VBox;
@@ -45,6 +46,8 @@ public class AutoCADView extends VBox {
         consoleLog.setStyle("-fx-font-family: 'Consolas', monospace; -fx-control-inner-background: #2b2b2b; -fx-text-fill: #00ff00;");
         consoleLog.setText("System Ready.\n");
 
+        VBox.setVgrow(consoleLog, Priority.ALWAYS);
+
         // --- Header ---
         Label header = new Label("AutoCAD Automation Dashboard");
         header.setStyle("-fx-font-size: 24px; -fx-font-weight: bold; -fx-text-fill: #333;");
@@ -64,6 +67,12 @@ public class AutoCADView extends VBox {
 
         addressField = new TextField();
         addressField.setPromptText("e.g. 123 Main St, Raleigh");
+
+        addressField.setOnKeyPressed(event -> {
+            if (event.getCode() == KeyCode.ENTER) {
+                runExeScript();
+            }
+        });
 
         downloadLayersCheck = new CheckBox("Download GIS Layers? (Parcels, Topo, Streams)");
         downloadLayersCheck.setSelected(true);
@@ -85,7 +94,7 @@ public class AutoCADView extends VBox {
         siteSection.getChildren().addAll(section1Label, new Separator(), addrLabel, addressField, downloadLayersCheck, runScriptBtn, statusLabel);
 
         // --- Section 2: Engineering Utilities ---
-        VBox utilsSection = new VBox(15);
+        VBox utilsSection = new VBox(10);
         utilsSection.setStyle("-fx-background-color: white; -fx-padding: 20; -fx-effect: dropshadow(three-pass-box, rgba(0,0,0,0.1), 0, 0, 0, 1); -fx-background-radius: 5;");
 
         Label section2Label = new Label("2. Drawing Utilities (Coming Soon)");
@@ -119,7 +128,6 @@ public class AutoCADView extends VBox {
 
         Label logLabel = new Label("Automation Log");
         logLabel.setStyle("-fx-font-weight: bold;");
-
 
         logSection.getChildren().addAll(logLabel, consoleLog);
 
@@ -240,10 +248,39 @@ public class AutoCADView extends VBox {
     }
 
     private void log(String message) {
-        consoleLog.appendText(timestamp() + " " + message + "\n");
-    }
+        Platform.runLater(() -> {
+            String timestamp = LocalTime.now().format(DateTimeFormatter.ofPattern("HH:mm:ss"));
+            String fullMessage = String.format("[%s] %s", timestamp, message);
 
-    private String timestamp() {
-        return "[" + LocalDateTime.now().format(DateTimeFormatter.ofPattern("HH:mm:ss")) + "]";
+            // --- SMART LOGGING LOGIC ---
+            // Check if this is a "progress update" (e.g., "... 2000 items")
+            boolean isProgressUpdate = message.trim().startsWith("...");
+
+            if (isProgressUpdate) {
+                // Get the current text in the console
+                String currentText = consoleLog.getText();
+
+                // Check if the console is not empty
+                if (!currentText.isEmpty()) {
+                    // Find the start of the last line
+                    // We look for the newline character before the end
+                    int lastNewLineIndex = currentText.lastIndexOf('\n', currentText.length() - 2);
+
+                    // Extract the last line to check what it is
+                    String lastLine = (lastNewLineIndex >= 0)
+                        ? currentText.substring(lastNewLineIndex + 1)
+                        : currentText;
+
+                    // If the LAST line was ALSO a progress update, delete it!
+                    if (lastLine.contains("...")) {
+                        // Delete from the start of the last line to the end of the text
+                        consoleLog.deleteText(lastNewLineIndex + 1, currentText.length());
+                    }
+                }
+            }
+            // ---------------------------
+
+            consoleLog.appendText(fullMessage + "\n");
+        });
     }
 }

@@ -1,0 +1,46 @@
+# Compiled class file
+*.class
+
+# Log file
+*.log
+
+# BlueJ files
+*.ctxt
+
+# Mobile Tools for Java (J2ME)
+.mtj.tmp/
+
+# Package Files #
+*.jar
+*.war
+*.nar
+*.ear
+*.zip
+*.tar.gz
+*.rar
+
+# virtual machine crash logs
+hs_err_pid*
+
+# VS Code
+.vscode/
+bin/
+
+# Maven
+target/
+*.ser
+*.ec
+.settings/
+.classpath
+.project
+.factorypath
+
+# --- BLOCK LARGE FILES ---
+output/
+dist/
+build/
+*.msi
+*.exe
+*.spec
+scripts/address_to_scr.exe
+src/main/resources/scripts/address_to_scr.exe

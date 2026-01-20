@@ -17,8 +17,10 @@ copy /y "target\pe-tools-1.0-SNAPSHOT.jar" "target\libs\pe-tools-1.0-SNAPSHOT.ja
 
 echo.
 echo [3/3] Generating MSI Installer (Version %AppVersion%)...
+
+:: --- CHANGED: --dest now points to your Desktop ---
 jpackage --type msi ^
-    --dest output ^
+    --dest "%USERPROFILE%\Desktop" ^
     --input target/libs ^
     --name "PE Tools" ^
     --main-jar pe-tools-1.0-SNAPSHOT.jar ^
@@ -31,6 +33,6 @@ jpackage --type msi ^
 
 echo.
 echo ==========================================
-echo      DONE! Installer created in 'output'
+echo      DONE! Installer created on your DESKTOP.
 echo ==========================================
 pause
