@@ -1,0 +1,82 @@
+@startuml PEToolsDiagram
+
+' --- STYLING ---
+skinparam classAttributeIconSize 0
+skinparam backgroundColor #FFFFFF
+skinparam classBackgroundColor #FEFECE
+skinparam classBorderColor #A80036
+skinparam linetype ortho
+
+' --- MAIN PACKAGE ---
+package "com.petools" {
+    class Launcher {
+        + main(args : String[]) : void
+    }
+
+    class App {
+        - scene : Scene
+        - rootLayout : BorderPane
+        + start(stage : Stage) : void
+        + getRootLayout() : BorderPane
+    }
+}
+
+' --- LAYOUT PACKAGE (Sidebar) ---
+package "com.petools.layout" {
+    class Sidebar {
+        - projectBtn : Button
+        - mapBtn : Button
+        - autocadBtn : Button
+        - websiteBtn : Button
+        - rootLayout : BorderPane
+        + Sidebar(root : BorderPane)
+        - setupNavigation() : void
+        - styleButton(btn : Button) : void
+    }
+}
+
+' --- FEATURES PACKAGE (The Tabs) ---
+package "com.petools.features" {
+    class ProjectView {
+        - editor : HTMLEditor
+        - notesTabPane : TabPane
+        + getView() : Node
+        - saveNote() : void
+        - loadNotes() : void
+        - createNewWeeklyTab() : void
+    }
+
+    class SiteLocatorView {
+        - webView : WebView
+        - webEngine : WebEngine
+        + getView() : Node
+        - loadGoogleMaps() : void
+    }
+
+    class AutoCADView {
+        - addressField : TextField
+        - consoleLog : TextArea
+        - runBtn : Button
+        + getView() : Node
+        - runExeScript() : void
+        - log(message : String) : void
+        - ensureScriptExists() : void
+    }
+
+    class WebsiteView {
+        - webView : WebView
+        + getView() : Node
+    }
+}
+
+' --- RELATIONSHIPS ---
+Launcher ..> App : launches >
+App *-- Sidebar : contains >
+Sidebar --> ProjectView : navigates to >
+Sidebar --> SiteLocatorView : navigates to >
+Sidebar --> AutoCADView : navigates to >
+Sidebar --> WebsiteView : navigates to >
+
+AutoCADView ..> "address_to_scr.exe" : executes >
+
+@enduml
