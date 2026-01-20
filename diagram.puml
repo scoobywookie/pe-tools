@@ -1,4 +1,4 @@
-@startuml PEToolsDiagram
+@startuml PEToolsUMLClassDiagram
 
 ' --- STYLING ---
 skinparam classAttributeIconSize 0

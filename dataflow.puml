@@ -1,0 +1,31 @@
+@startuml PEToolsDataFlowDiagram
+skinparam backgroundColor white
+
+' Define the actors and components
+actor "User" as User
+participant "Java GUI\n(AutoCADView)" as Java
+participant "ProcessBuilder\n(Background Thread)" as PB
+participant "address_to_scr.exe\n(Python Engine)" as Py
+database "Raleigh\nOpen Data API" as API
+participant "Desktop Files\n(.scr / .shp)" as Files
+
+' The Flow
+User -> Java : Types Address & Clicks Run
+Java -> PB : Passes Address String
+PB -> Py : Executes Script with Args
+
+note right of Py
+    Algorithm:
+    1. Fetch data
+    2. Filter by address
+    3. Generate geometry
+end note
+
+Py -> API : HTTP GET Request (JSON)
+API --> Py : Returns GeoJSON Data
+Py -> Files : Writes .scr and .shp files
+Py --> PB : Prints "Success" to StdOut
+PB --> Java : Updates Log Window
+Java --> User : Shows "Done" Message
+
+@enduml

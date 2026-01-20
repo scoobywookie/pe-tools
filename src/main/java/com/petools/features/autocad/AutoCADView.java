@@ -114,7 +114,7 @@ public class AutoCADView extends VBox {
         utilsSection.getChildren().addAll(section2Label, new Separator(), buttonBox);
 
         // --- NEW: Layout Container (Side-by-Side) ---
-        HBox topRow = new HBox(20); // 20px gap between the two cards
+        HBox topRow = new HBox(20);
 
         // Make them share horizontal space equally
         HBox.setHgrow(siteSection, Priority.ALWAYS);
@@ -142,8 +142,7 @@ public class AutoCADView extends VBox {
                 Files.createDirectories(SCRIPT_DIR);
             }
 
-            // WE DELETED THE "IF EXISTS" CHECK HERE
-            // Now we force-copy the new file every single time the app starts.
+            // Force-copy the new file every single time the app starts.
             try (InputStream in = getClass().getResourceAsStream("/scripts/address_to_scr.exe")) {
                 if (in != null) {
                     Files.copy(in, SCRIPT_PATH, StandardCopyOption.REPLACE_EXISTING);
@@ -162,7 +161,7 @@ public class AutoCADView extends VBox {
                 Files.createDirectories(desktopImports);
             }
 
-            // We only copy the IPF if it's missing (to avoid overwriting user settings)
+            // Only copy the IPF if it's missing (to avoid overwriting user settings)
             if (!Files.exists(ipfPath)) {
                 try (InputStream in = getClass().getResourceAsStream("/scripts/gis data.ipf")) {
                     if (in != null) {
@@ -263,7 +262,7 @@ public class AutoCADView extends VBox {
                 // Check if the console is not empty
                 if (!currentText.isEmpty()) {
                     // Find the start of the last line
-                    // We look for the newline character before the end
+                    // Look for the newline character before the end
                     int lastNewLineIndex = currentText.lastIndexOf('\n', currentText.length() - 2);
 
                     // Extract the last line to check what it is
@@ -271,15 +270,13 @@ public class AutoCADView extends VBox {
                         ? currentText.substring(lastNewLineIndex + 1)
                         : currentText;
 
-                    // If the LAST line was ALSO a progress update, delete it!
+                    // If the LAST line was ALSO a progress update, delete it
                     if (lastLine.contains("...")) {
                         // Delete from the start of the last line to the end of the text
                         consoleLog.deleteText(lastNewLineIndex + 1, currentText.length());
                     }
                 }
             }
-            // ---------------------------
-
             consoleLog.appendText(fullMessage + "\n");
         });
     }

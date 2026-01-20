@@ -201,8 +201,9 @@ public class TodoView extends BorderPane {
     private void customizeEditor(HTMLEditor editor) {
         // Wait for Skin to load
         if (editor.getSkin() != null) {
-            Platform.runLater(() -> applyCustomizations(editor));
+            applyCustomizations(editor);
         } else {
+            // Wait for the visual skin to load, then run immediately
             editor.skinProperty().addListener((obs, old, skin) -> {
                 if (skin != null) Platform.runLater(() -> applyCustomizations(editor));
             });
@@ -214,21 +215,19 @@ public class TodoView extends BorderPane {
         Set<Node> toolbars = editor.lookupAll(".tool-bar");
         if (toolbars.size() < 2) return;
 
-        // Toolbars are usually: [0] Top (Cut/Paste/Indent), [1] Bottom (Fonts/Color)
         ToolBar topToolbar = (ToolBar) toolbars.toArray()[0];
-        ToolBar bottomToolbar = (ToolBar) toolbars.toArray()[1];
 
-        // Add "Insert Link" to Bottom Toolbar (Fits better with text tools)
-        Button linkBtn = new Button("🔗");
-        linkBtn.setStyle("-fx-font-size: 11px; -fx-padding: 4 8;");
-        linkBtn.setOnAction(e -> promptForLink(editor));
-        bottomToolbar.getItems().addAll(new Separator(), linkBtn);
-
-        // Add "Print" to Top Toolbar (Far right)
+        // --- 1. Add Print Button (Top Toolbar)) ---
         Button printBtn = new Button("🖨");
         printBtn.setStyle("-fx-font-size: 11px; -fx-padding: 4 8;");
         printBtn.setOnAction(e -> printEditor(editor));
-        topToolbar.getItems().addAll(new Separator(), printBtn);
+        topToolbar.getItems().add(printBtn);
+
+        // --- 2. Add Link Button (Bottom Toolbar) ---
+        Button linkBtn = new Button("🔗");
+        linkBtn.setStyle("-fx-font-size: 11px; -fx-padding: 4 8;");
+        linkBtn.setOnAction(e -> promptForLink(editor));
+        topToolbar.getItems().add(linkBtn);
     }
 
     private void enableKeyboardShortcuts(HTMLEditor editor) {
