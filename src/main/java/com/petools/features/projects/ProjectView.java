@@ -234,7 +234,7 @@ public class ProjectView extends BorderPane {
     private void copyTagToClipboard() {
         Project selected = table.getSelectionModel().getSelectedItem();
         if (selected != null) {
-            // Creates a tag like "[23-105] Smith Residence"
+            // Creates a tag like "#Barret Road"
             String tag = "#" + selected.getName();
             ClipboardContent content = new ClipboardContent();
             content.putString(tag);
