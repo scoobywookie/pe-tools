@@ -1,9 +1,9 @@
 # PE Tools: Civil Engineering Automation Dashboard
 
-### [IB Computer Science Internal Assessment (2026)]([url](https://docs.google.com/document/d/1ryZBZauZazsYkmEyCkVcYuBlQzt3nQNmL9Y17buCiaE/edit?tab=t.job2ve37qz3z#heading=h.yptstjcz1rlk))
+### IB Computer Science Internal Assessment (2026)
 
 **Client:** Place Engineering, Raleigh, NC
-**Developer:** [Daniel Puckett]([url](https://docs.google.com/document/d/1ryZBZauZazsYkmEyCkVcYuBlQzt3nQNmL9Y17buCiaE/edit?tab=t.job2ve37qz3z#heading=h.yptstjcz1rlk))
+**Developer:** Daniel Puckett
 
 ![Java](https://img.shields.io/badge/Java-17%2B-orange) ![Maven](https://img.shields.io/badge/Build-Maven-blue) ![Platform](https://img.shields.io/badge/Platform-Windows-lightgrey)
 
