@@ -17,9 +17,12 @@ public class Sidebar extends VBox {
 
     @SuppressWarnings({"unused", "FieldMayBeFinal"})
     private MainLayout mainLayout;
-    private TodoView cachedTodoView;
 
-    // Exact styles from your old App.java
+    // --- 1. DEFINE CACHED VIEWS HERE ---
+    private TodoView cachedTodoView;
+    private AutoCADView cachedAutoCADView; // Cache the AutoCAD view
+
+    // Styles for tab buttons
     private final String defaultButtonStyle = "-fx-background-color: #555555; -fx-text-fill: white;";
     private final String selectedButtonStyle = "-fx-background-color: #555555; -fx-text-fill: red;";
 
@@ -28,15 +31,16 @@ public class Sidebar extends VBox {
     public Sidebar(MainLayout mainLayout) {
         this.mainLayout = mainLayout;
 
-        // 1. Container Styling
-        // MATCHES ORIGINAL: VBox(10) and padding 10
+        // Container Styling
         this.setSpacing(10);
         this.setPadding(new Insets(10));
         this.setStyle("-fx-background-color: #333333;");
 
+        // --- 2. INITIALIZE CACHED VIEWS ---
         this.cachedTodoView = new TodoView();
+        this.cachedAutoCADView = new AutoCADView();
 
-        // 2. Create Buttons
+        // Create Buttons
         Button homeBtn = createNavButton("Home");
         Button todoBtn = createNavButton("To-Do List");
         Button projectDataBtn = createNavButton("Projects");
@@ -45,7 +49,7 @@ public class Sidebar extends VBox {
         Button webMngmntBtn = createNavButton("Website");
         Button settingsBtn = createNavButton("Settings");
 
-        // 3. Define Actions
+        // Define Actions
         homeBtn.setOnAction(e -> {
             updateSelection(homeBtn);
             mainLayout.setView(new HomeView());
@@ -64,7 +68,8 @@ public class Sidebar extends VBox {
 
         cadToolsBtn.setOnAction(e -> {
             updateSelection(cadToolsBtn);
-            mainLayout.setView(new AutoCADView());
+            // --- 3. USE THE CACHED VIEW ---
+            mainLayout.setView(cachedAutoCADView);
         });
 
         siteLocatorBtn.setOnAction(e -> {
@@ -85,20 +90,19 @@ public class Sidebar extends VBox {
         Region spacer = new Region();
         VBox.setVgrow(spacer, Priority.ALWAYS);
 
-        // 4. Add to Layout
+        // Add to Layout
         this.getChildren().addAll(
             homeBtn, todoBtn, projectDataBtn,
             cadToolsBtn, siteLocatorBtn, webMngmntBtn,
             spacer, settingsBtn
         );
 
-        // 5. Set Initial Selection
+        // Set Initial Selection
         updateSelection(homeBtn);
     }
 
     private Button createNavButton(String text) {
         Button btn = new Button(text);
-        // MATCHES ORIGINAL: expanding to fill the VBox width
         btn.setMaxWidth(Double.MAX_VALUE);
         btn.setStyle(defaultButtonStyle);
         return btn;

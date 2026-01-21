@@ -4,7 +4,7 @@ echo      PE TOOLS INSTALLER GENERATOR
 echo ==========================================
 echo.
 
-:: 1. Ask for the version number (e.g. 1.2.0)
+:: 1. Ask for the version number (e.g. 1.0)
 set /p AppVersion="Enter version number (e.g. 1.0): "
 
 echo.

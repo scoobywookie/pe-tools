@@ -1,9 +1,7 @@
 package com.petools;
 
 import java.io.InputStream;
-
 import com.petools.layout.MainLayout;
-
 import javafx.application.Application;
 import javafx.scene.Scene;
 import javafx.scene.image.Image;

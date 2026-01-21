@@ -14,7 +14,7 @@ import os
 import io
 
 # --- 1. DYNAMIC PATH SETUP (For Java/Exe Compatibility) ---
-# Detect User Desktop automatically to avoid hardcoded "Daniel" paths
+# Detect User Desktop automatically
 USER_DESKTOP = os.path.join(os.path.expanduser("~"), "Desktop")
 OUTPUT_FOLDER = os.path.join(USER_DESKTOP, "CAD-IMPORTS")
 
