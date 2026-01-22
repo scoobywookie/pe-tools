@@ -26,8 +26,12 @@ import javafx.scene.control.TableColumn;
 import javafx.scene.control.TableView;
 import javafx.scene.control.TextField;
 import javafx.scene.control.Tooltip;
+import javafx.scene.control.cell.ComboBoxTableCell;
+import javafx.scene.control.cell.TextFieldTableCell;
 import javafx.scene.input.Clipboard;
 import javafx.scene.input.ClipboardContent;
+import javafx.scene.input.MouseButton;
+import javafx.scene.input.MouseEvent;
 import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
@@ -72,6 +76,8 @@ public class ProjectView extends BorderPane {
 
         // --- 2. The Table ---
         table = new TableView<>();
+        table.setEditable(true);
+
         masterData = FXCollections.observableArrayList();
         loadData();
 
@@ -79,59 +85,99 @@ public class ProjectView extends BorderPane {
         table.setItems(filteredData);
         table.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY);
 
-        // Columns
+        // --- COL 1: Project Name (Editable) ---
         TableColumn<Project, String> colName = new TableColumn<>("Project Name");
         colName.setCellValueFactory(data -> data.getValue().nameProperty());
+        // Enable Text Field Editing
+        colName.setCellFactory(TextFieldTableCell.forTableColumn());
+        // Save on Enter
+        colName.setOnEditCommit(e -> {
+            e.getRowValue().nameProperty().set(e.getNewValue());
+        });
 
+        // --- COL 2: Client (Editable) ---
         TableColumn<Project, String> colClient = new TableColumn<>("Client");
         colClient.setCellValueFactory(data -> data.getValue().clientProperty());
+        // Enable Text Field Editing
+        colClient.setCellFactory(TextFieldTableCell.forTableColumn());
+        // Save on Enter
+        colClient.setOnEditCommit(e -> {
+            e.getRowValue().nameProperty().set(e.getNewValue());
+        });
 
+        // --- COL 3: Status (Dropdown Edit + Colors) ---
         TableColumn<Project, String> colStatus = new TableColumn<>("Status");
         colStatus.setCellValueFactory(data -> data.getValue().statusProperty());
-        colStatus.setCellFactory(col -> new TableCell<>() {
+
+        // Define the options for the dropdown
+        ObservableList<String> statusOptions = FXCollections.observableArrayList("Active", "Inactive", "On Hold", "Closed");
+
+        // Custom Cell Factory: Combines Dropdown (ComboBoxTableCell) with your Custom Colors
+        colStatus.setCellFactory(col -> new ComboBoxTableCell<>(statusOptions) {
             @Override
-            protected void updateItem(String item, boolean empty) {
-                super.updateItem(item, empty);
+            public void updateItem(String item, boolean empty) {
+                super.updateItem(item, empty); // This sets up the dropdown logic
+
+                // Now apply the colors
                 if (empty || item == null) {
-                    setText(null);
                     setStyle("");
                 } else {
-                    setText(item);
                     switch (item) {
                         case "Active" -> setStyle("-fx-text-fill: #28a745; -fx-font-weight: bold;");
+                        case "Inactive" -> setStyle("-fx-text-fill: #d81414; -fx-font-weight: bold;");
                         case "On Hold" -> setStyle("-fx-text-fill: #ffc107; -fx-font-weight: bold;");
-                        default -> setStyle("-fx-text-fill: #6c757d;");
+                        default -> setStyle("-fx-text-fill: #6c757d; -fx-font-weight: bold");
                     }
                 }
             }
         });
 
-        // Folder Link Column
+        // Save when the user picks a new option
+        colStatus.setOnEditCommit(e -> {
+            e.getRowValue().statusProperty().set(e.getNewValue());
+            saveData();
+        });
+
+        // --- COL 4: Folder Link (Double-Click to Edit) ---
         TableColumn<Project, String> colFolder = new TableColumn<>("Folder");
         colFolder.setSortable(false);
         colFolder.setPrefWidth(60);
+        colFolder.setCellValueFactory(data -> data.getValue().folderPathProperty()); // Bind property
+
         colFolder.setCellFactory(col -> new TableCell<>() {
             private final Button btn = new Button("📂");
             {
                 btn.setStyle("-fx-background-color: transparent; -fx-cursor: hand; -fx-font-size: 14px;");
+                btn.setFocusTraversable(false);
                 btn.setOnAction(e -> {
                     Project p = getTableView().getItems().get(getIndex());
                     openProjectFolder(p.getFolderPath());
                 });
             }
+
             @Override
             protected void updateItem(String item, boolean empty) {
                 super.updateItem(item, empty);
+
+                // 1. Handle Double Click to Browse
+                this.setOnMouseClicked((MouseEvent event) -> {
+                    if (event.getButton().equals(MouseButton.PRIMARY) && event.getClickCount() == 2 && !empty) {
+                        chooseFolderForProject(getTableView().getItems().get(getIndex()));
+                    }
+                });
+
                 if (empty) {
                     setGraphic(null);
                 } else {
-                    Project p = getTableView().getItems().get(getIndex());
-                    // Only show button if path exists and isn't empty
-                    if (p.getFolderPath() != null && !p.getFolderPath().isEmpty()) {
+                    // Show button if path exists
+                    if (item != null && !item.isEmpty()) {
                         setGraphic(btn);
-                        Tooltip.install(btn, new Tooltip(p.getFolderPath()));
+                        Tooltip.install(btn, new Tooltip(item + "\n(Double-click cell to change)"));
                     } else {
+                        // Show "Add" hint if missing
                         setGraphic(null);
+                        setText("Add +");
+                        setStyle("-fx-text-fill: #ccc; -fx-alignment: CENTER;");
                     }
                 }
             }
@@ -139,6 +185,7 @@ public class ProjectView extends BorderPane {
 
         table.getColumns().addAll(colName, colClient, colStatus, colFolder);
 
+        // Delete Key Handler
         table.setOnKeyPressed(event -> {
             if (event.getCode() == javafx.scene.input.KeyCode.DELETE) {
                 deleteSelected();
@@ -148,9 +195,18 @@ public class ProjectView extends BorderPane {
         // Context Menu (Right Click)
         ContextMenu cm = new ContextMenu();
 
+        // 1. Copy Tag Option
         MenuItem copyTagItem = new MenuItem("Copy Project Tag (for To-Do)");
         copyTagItem.setOnAction(e -> copyTagToClipboard());
 
+        // 2. Chage Folder Path Option
+        MenuItem changeFolderItem = new MenuItem("Change Folder Path...");
+        changeFolderItem.setOnAction(e -> {
+            Project p = table.getSelectionModel().getSelectedItem();
+            if(p != null) chooseFolderForProject(p); // Opens the Browse Dialog
+        });
+
+        // 3. Delete Option
         MenuItem deleteItem = new MenuItem("Delete Project");
         deleteItem.setStyle("-fx-text-fill: red;");
         deleteItem.setOnAction(e -> deleteSelected());
@@ -177,7 +233,7 @@ public class ProjectView extends BorderPane {
         clientField.setPromptText("Client");
         clientField.setPrefWidth(120);
 
-        statusBox = new ComboBox<>(FXCollections.observableArrayList("Active", "On Hold", "Closed"));
+        statusBox = new ComboBox<>(FXCollections.observableArrayList(statusOptions));
         statusBox.getSelectionModel().selectFirst();
         statusBox.setPrefWidth(100);
 
@@ -205,6 +261,17 @@ public class ProjectView extends BorderPane {
     }
 
     // --- Actions ---
+
+    private void chooseFolderForProject(Project p) {
+        DirectoryChooser dc = new DirectoryChooser();
+        dc.setTitle("Update Folder for: " + p.getName());
+        File f = dc.showDialog(getScene().getWindow());
+        if (f != null) {
+            p.folderPathProperty().set(f.getAbsolutePath());
+            saveData();
+            table.refresh(); // Force UI update
+        }
+    }
 
     private void addProject() {
         if (pNameField.getText().isEmpty()) return;

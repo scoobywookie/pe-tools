@@ -4,7 +4,9 @@ setlocal
 :: --- 1. DEFINE PATHS ---
 SET "PROJECT_ROOT=%~dp0"
 SET "PYTHON_SOURCE=%PROJECT_ROOT%scripts"
-SET "JAVA_RESOURCES=%PROJECT_ROOT%src\main\resources\scripts"
+SET "JAVA_RESOURCES=%PROJECT_ROOT%src\main\resources"
+
+if not exist "%JAVA_RESOURCES%" mkdir "%JAVA_RESOURCES%"
 
 echo ==========================================
 echo      PATH DIAGNOSTICS
@@ -14,20 +16,19 @@ echo Python Source:  %PYTHON_SOURCE%
 echo Java Target:    %JAVA_RESOURCES%
 echo.
 
-:: --- 2. COMPILE PYTHON (THE FIX) ---
+:: --- 2. COMPILE PYTHON ---
 echo [1/3] Compiling Python script...
-echo       NOTE: This will take a moment (collecting map engines)...
+echo       NOTE: This will take a moment...
 cd /d "%PYTHON_SOURCE%"
 
-:: --- MASSIVE COMMAND TO FORCE FIONA/SHAPELY INCLUSION ---
 python -m PyInstaller --onefile --console ^
- --collect-all geopandas ^
- --collect-all fiona ^
- --collect-all shapely ^
- --hidden-import fiona.ogrext ^
- --hidden-import fiona._shim ^
- --hidden-import fiona.schema ^
- address_to_scr.py
+    --collect-all geopandas ^
+    --collect-all fiona ^
+    --collect-all shapely ^
+    --hidden-import fiona.ogrext ^
+    --hidden-import fiona._shim ^
+    --hidden-import fiona.schema ^
+    address_to_scr.py
 
 if not exist "dist\address_to_scr.exe" (
     echo.
@@ -36,11 +37,9 @@ if not exist "dist\address_to_scr.exe" (
     exit /b
 )
 
-:: --- 3. COPY THE FILE ---
+:: --- 3. MOVE TO RESOURCES ---
 echo.
-echo [2/3] Copying .exe to Java Resources...
-
-if not exist "%JAVA_RESOURCES%" mkdir "%JAVA_RESOURCES%"
+echo [2/3] Moving .exe to Java Resources...
 
 copy /y "dist\address_to_scr.exe" "%JAVA_RESOURCES%\address_to_scr.exe"
 
@@ -51,20 +50,24 @@ if %ERRORLEVEL% NEQ 0 (
     exit /b
 )
 
-:: Keep local copy
-move /y "dist\address_to_scr.exe" "address_to_scr.exe"
-
-:: --- 4. CLEANUP ---
+:: --- 4. CLEANUP (FIXED) ---
 echo.
 echo [3/3] Cleaning up...
-rd /s /q build
-rd /s /q dist
-del /q address_to_scr.spec
-if exist __pycache__ rd /s /q __pycache__
+
+cd /d "%PROJECT_ROOT%"
+
+:: WAIT 2 SECONDS for Windows Defender to release the file lock
+timeout /t 2 /nobreak >nul
+
+:: Force delete using full paths
+if exist "%PYTHON_SOURCE%\build" rd /s /q "%PYTHON_SOURCE%\build"
+if exist "%PYTHON_SOURCE%\dist" rd /s /q "%PYTHON_SOURCE%\dist"
+if exist "%PYTHON_SOURCE%\address_to_scr.spec" del /q "%PYTHON_SOURCE%\address_to_scr.spec"
+if exist "%PYTHON_SOURCE%\__pycache__" rd /s /q "%PYTHON_SOURCE%\__pycache__"
 
 echo.
 echo ==========================================
 echo      ✅ SUCCESS!
-echo      File copied to: %JAVA_RESOURCES%
+echo      File located at: %JAVA_RESOURCES%\address_to_scr.exe
 echo ==========================================
 pause

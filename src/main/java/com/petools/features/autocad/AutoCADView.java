@@ -32,9 +32,13 @@ public class AutoCADView extends VBox {
     private final CheckBox downloadLayersCheck;
     private final TextArea consoleLog;
 
-    // PORTABLE PATH: Looks for "scripts/address_to_scr.exe" inside the app folder
+    // --- PATHS ---
+    // 1. Where the .exe lives (.petools/scripts)
     private static final Path SCRIPT_DIR = Paths.get(System.getProperty("user.home"), ".petools", "scripts");
     private static final Path SCRIPT_PATH = SCRIPT_DIR.resolve("address_to_scr.exe");
+
+    // 2. Where the CAD outputs go (.petools/cad-imports)
+    private static final Path CAD_OUTPUT_DIR = Paths.get(System.getProperty("user.home"), ".petools", "cad-imports");
 
     public AutoCADView() {
         this.setSpacing(20);
@@ -44,7 +48,7 @@ public class AutoCADView extends VBox {
         consoleLog = new TextArea();
         consoleLog.setEditable(false);
         consoleLog.setStyle("-fx-font-family: 'Consolas', monospace; -fx-control-inner-background: #2b2b2b; -fx-text-fill: #00ff00;");
-        consoleLog.setText("System Ready.\n");
+        consoleLog.setText("System Ready.\nOutput Folder: " + CAD_OUTPUT_DIR.toString() + "\n");
 
         VBox.setVgrow(consoleLog, Priority.ALWAYS);
 
@@ -52,7 +56,7 @@ public class AutoCADView extends VBox {
         Label header = new Label("AutoCAD Automation Dashboard");
         header.setStyle("-fx-font-size: 24px; -fx-font-weight: bold; -fx-text-fill: #333;");
 
-        // --- 1. SELF-HEAL CHECK (Extract .exe if missing) ---
+        // --- 1. SELF-HEAL CHECK (Extract tools) ---
         ensureScriptExists();
 
         // --- Section 1: Site Setup ---
@@ -97,29 +101,26 @@ public class AutoCADView extends VBox {
         VBox utilsSection = new VBox(10);
         utilsSection.setStyle("-fx-background-color: white; -fx-padding: 20; -fx-effect: dropshadow(three-pass-box, rgba(0,0,0,0.1), 0, 0, 0, 1); -fx-background-radius: 5;");
 
-        Label section2Label = new Label("2. Drawing Utilities (Coming Soon)");
+        Label section2Label = new Label("2. Drawing Utilities");
         section2Label.setStyle("-fx-font-size: 16px; -fx-font-weight: bold;");
 
-        VBox buttonBox = new VBox(10); // Changed to VBox for cleaner stacking in the narrower column
+        VBox buttonBox = new VBox(10);
 
         Button epaNetBtn = createActionBtn("Convert EPANET to DWG", "#28a745");
-        epaNetBtn.setMaxWidth(Double.MAX_VALUE); // Make button fill width
+        epaNetBtn.setMaxWidth(Double.MAX_VALUE);
         epaNetBtn.setOnAction(e -> runPlaceholderTask("Reading .inp file... mapping nodes to blocks... export complete."));
 
         Button cleanupBtn = createActionBtn("Standard Layer Cleanup", "#6c757d");
-        cleanupBtn.setMaxWidth(Double.MAX_VALUE); // Make button fill width
+        cleanupBtn.setMaxWidth(Double.MAX_VALUE);
         cleanupBtn.setOnAction(e -> runPlaceholderTask("Purging unused layers... fixing linetypes... auditing drawing... Cleaned."));
 
         buttonBox.getChildren().addAll(epaNetBtn, cleanupBtn);
         utilsSection.getChildren().addAll(section2Label, new Separator(), buttonBox);
 
-        // --- NEW: Layout Container (Side-by-Side) ---
+        // --- Layout Container ---
         HBox topRow = new HBox(20);
-
-        // Make them share horizontal space equally
         HBox.setHgrow(siteSection, Priority.ALWAYS);
         HBox.setHgrow(utilsSection, Priority.ALWAYS);
-
         topRow.getChildren().addAll(siteSection, utilsSection);
 
         // --- Section 3: Log ---
@@ -131,56 +132,51 @@ public class AutoCADView extends VBox {
 
         logSection.getChildren().addAll(logLabel, consoleLog);
 
-        // Add the topRow (side-by-side) instead of individual sections
         this.getChildren().addAll(header, topRow, logSection);
     }
 
     private void ensureScriptExists() {
         try {
-            // --- 1. HANDLE THE EXE (Always Overwrite) ---
-            if (!Files.exists(SCRIPT_DIR)) {
-                Files.createDirectories(SCRIPT_DIR);
-            }
+            // A. Create Directories
+            if (!Files.exists(SCRIPT_DIR)) Files.createDirectories(SCRIPT_DIR);
+            if (!Files.exists(CAD_OUTPUT_DIR)) Files.createDirectories(CAD_OUTPUT_DIR);
 
-            // Force-copy the new file every single time the app starts.
-            try (InputStream in = getClass().getResourceAsStream("/scripts/address_to_scr.exe")) {
-                if (in != null) {
-                    Files.copy(in, SCRIPT_PATH, StandardCopyOption.REPLACE_EXISTING);
-                    log("✅ Automation engine updated to latest version.");
-                } else {
-                    log("ERROR: Could not find .exe in JAR!");
-                }
-            }
+            // B. Extract/Update EXE (Logic Engine)
+            extractResource("address_to_scr.exe", SCRIPT_PATH);
 
-            // --- 2. HANDLE THE IPF (On Desktop) ---
-            String userHome = System.getProperty("user.home");
-            Path desktopImports = Paths.get(userHome, "Desktop", "CAD-IMPORTS");
-            Path ipfPath = desktopImports.resolve("gis data.ipf");
+            // C. Extract CAD Assets (Templates & LISP) -> .petools/cad-imports
+            String[] assetsToExtract = {
+                "gis data.ipf",
+                "CXXXXX_Xref_Surv.dwt",
+                "apply_topo_elevation.lsp",
+                "enable_linetype_generation.lsp",
+                "full_draw_circ.lsp"
+            };
 
-            if (!Files.exists(desktopImports)) {
-                Files.createDirectories(desktopImports);
-            }
-
-            // Only copy the IPF if it's missing (to avoid overwriting user settings)
-            if (!Files.exists(ipfPath)) {
-                try (InputStream in = getClass().getResourceAsStream("/scripts/gis data.ipf")) {
-                    if (in != null) {
-                        Files.copy(in, ipfPath, StandardCopyOption.REPLACE_EXISTING);
-                        log("Restored missing GIS profile.");
-                    } else {
-                        // Fallback: try finding it without the /scripts/ prefix if needed
-                        try (InputStream in2 = getClass().getResourceAsStream("/gis data.ipf")) {
-                            if (in2 != null) {
-                                Files.copy(in2, ipfPath, StandardCopyOption.REPLACE_EXISTING);
-                                log("Restored missing GIS profile.");
-                            }
-                        }
-                    }
-                }
+            for (String asset : assetsToExtract) {
+                Path dest = CAD_OUTPUT_DIR.resolve(asset);
+                extractResource(asset, dest);
             }
 
         } catch (IOException e) {
             log("Error updating files: " + e.getMessage());
+        }
+    }
+
+    // --- Helper to reduce Copy/Paste ---
+    private void extractResource(String resourceName, Path destination) throws IOException {
+        // Only extract if missing (to avoid overwriting user edits)
+        if (Files.exists(destination)) return;
+
+        String resourcePath = "/" + resourceName;
+
+        try (InputStream in = getClass().getResourceAsStream(resourcePath)) {
+            if (in != null) {
+                Files.copy(in, destination, StandardCopyOption.REPLACE_EXISTING);
+                log("Restored " + resourceName);
+            } else {
+                log("⚠️ Missing in JAR: " + resourceName);
+            }
         }
     }
 
@@ -194,7 +190,7 @@ public class AutoCADView extends VBox {
         String downloadArg = downloadLayersCheck.isSelected() ? "y" : "n";
 
         log("🚀 Launching Automation Engine...");
-        log("   Address: " + address);
+        log("   Target: " + CAD_OUTPUT_DIR.toString());
 
         new Thread(() -> {
             try {
@@ -219,7 +215,7 @@ public class AutoCADView extends VBox {
                 int exitCode = process.waitFor();
 
                 Platform.runLater(() -> {
-                    if (exitCode == 0) log("\n✅ Process Complete.");
+                    if (exitCode == 0) log("\n✅ Process Complete. Files in: " + CAD_OUTPUT_DIR.getFileName());
                     else log("\n❌ Process Failed (Exit Code: " + exitCode + ")");
                 });
 
@@ -251,28 +247,17 @@ public class AutoCADView extends VBox {
             String timestamp = LocalTime.now().format(DateTimeFormatter.ofPattern("HH:mm:ss"));
             String fullMessage = String.format("[%s] %s", timestamp, message);
 
-            // --- SMART LOGGING LOGIC ---
-            // Check if this is a "progress update" (e.g., "... 2000 items")
             boolean isProgressUpdate = message.trim().startsWith("...");
 
             if (isProgressUpdate) {
-                // Get the current text in the console
                 String currentText = consoleLog.getText();
-
-                // Check if the console is not empty
                 if (!currentText.isEmpty()) {
-                    // Find the start of the last line
-                    // Look for the newline character before the end
                     int lastNewLineIndex = currentText.lastIndexOf('\n', currentText.length() - 2);
-
-                    // Extract the last line to check what it is
                     String lastLine = (lastNewLineIndex >= 0)
                         ? currentText.substring(lastNewLineIndex + 1)
                         : currentText;
 
-                    // If the LAST line was ALSO a progress update, delete it
                     if (lastLine.contains("...")) {
-                        // Delete from the start of the last line to the end of the text
                         consoleLog.deleteText(lastNewLineIndex + 1, currentText.length());
                     }
                 }

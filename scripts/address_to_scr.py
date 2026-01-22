@@ -15,8 +15,7 @@ import io
 
 # --- 1. DYNAMIC PATH SETUP (For Java/Exe Compatibility) ---
 # Detect User Desktop automatically
-USER_DESKTOP = os.path.join(os.path.expanduser("~"), "Desktop")
-OUTPUT_FOLDER = os.path.join(USER_DESKTOP, "CAD-IMPORTS")
+OUTPUT_FOLDER = os.path.join(os.path.join(os.path.expanduser("~"), ".petools"), "CAD-IMPORTS")
 
 # Ensure folder exists
 if not os.path.exists(OUTPUT_FOLDER):

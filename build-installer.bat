@@ -3,9 +3,13 @@ echo ==========================================
 echo      PE TOOLS INSTALLER GENERATOR
 echo ==========================================
 echo.
+echo RULES FOR AUTO-UPDATE TO WORK:
+echo 1. You MUST uninstall the old version manually ONE LAST TIME before using this new system.
+echo 2. For future updates, you MUST increase the version number (e.g. 1.0 -> 1.1).
+echo.
 
-:: 1. Ask for the version number (e.g. 1.0)
-set /p AppVersion="Enter version number (e.g. 1.0): "
+:: 1. Ask for the version number
+set /p AppVersion="Enter NEW version number (e.g. 1.1): "
 
 echo.
 echo [1/3] Building Project with Maven...
@@ -18,7 +22,12 @@ copy /y "target\pe-tools-1.0-SNAPSHOT.jar" "target\libs\pe-tools-1.0-SNAPSHOT.ja
 echo.
 echo [3/3] Generating MSI Installer (Version %AppVersion%)...
 
-:: --- CHANGED: --dest now points to your Desktop ---
+:: --- EXPLANATION OF CHANGES ---
+:: --win-upgrade-uuid: This specific ID tells Windows this is the "PE Tools" family.
+::                     KEEP THIS ID THE SAME FOREVER. Do not change it.
+:: --win-dir-chooser:  Removed. Allowing users to change install paths breaks auto-updates often.
+::                     Standard install location is safer for upgrades.
+
 jpackage --type msi ^
     --dest "%USERPROFILE%\Desktop" ^
     --input target/libs ^
@@ -26,9 +35,9 @@ jpackage --type msi ^
     --main-jar pe-tools-1.0-SNAPSHOT.jar ^
     --main-class com.petools.Launcher ^
     --icon pe_logo.ico ^
-    --win-dir-chooser ^
     --win-menu ^
     --win-shortcut ^
+    --win-upgrade-uuid "a06c8882-7f21-41d3-9723-57a53c664320" ^
     --app-version %AppVersion%
 
 echo.
