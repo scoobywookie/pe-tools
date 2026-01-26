@@ -31,7 +31,7 @@ echo [3/3] Generating MSI Installer (Version %AppVersion%)...
 jpackage --type msi ^
     --dest "%USERPROFILE%\Desktop" ^
     --input target/libs ^
-    --name "PE Tools" ^
+    --name "PE-Tools" ^
     --main-jar pe-tools-1.0-SNAPSHOT.jar ^
     --main-class com.petools.Launcher ^
     --icon pe_logo.ico ^

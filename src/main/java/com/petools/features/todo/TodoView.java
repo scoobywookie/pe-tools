@@ -9,10 +9,12 @@ import java.nio.file.Paths;
 import java.time.LocalDate;
 import java.time.temporal.WeekFields;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
 import java.util.Set;
+import java.util.stream.Stream;
 
 import javafx.application.Platform;
 import javafx.geometry.Insets;
@@ -84,7 +86,26 @@ public class TodoView extends BorderPane {
         // --- 2. Center Tabs ---
         tabPane = new TabPane();
         tabPane.setStyle("-fx-background-color: white;");
-        openTab(getCurrentWeekName());
+
+        // --- NEW WEEK LOGIC ---
+        String currentWeekTitle = getCurrentWeekName(); // "Week 5 (2026)"
+        String currentFilename = sanitize(currentWeekTitle); // "Week_5__2026_.html"
+        Path currentPath = DATA_DIR.resolve(currentFilename);
+
+        // If today is Monday (or first open of the week) and the file doesn't exist yet...
+        if (!Files.exists(currentPath)) {
+            Path previousFile = findLatestNoteFile();
+
+            if (previousFile != null) {
+                try {
+                    String oldContent = Files.readString(previousFile);
+                    Files.writeString(currentPath, oldContent); // Create the new file with old content
+
+                } catch (IOException e) {}
+            }
+        }
+
+        openTab(currentWeekTitle);
 
         // Top Bar
         Button printBtn = new Button("🖨 Print");
@@ -102,6 +123,22 @@ public class TodoView extends BorderPane {
         this.setCenter(centerLayout);
 
         refreshSidebar();
+    }
+
+    // --- Helper: Find the most recently modified HTML file ---
+    private Path findLatestNoteFile() {
+        try (Stream<Path> files = Files.list(DATA_DIR)) {
+            return files
+                .filter(p -> p.toString().endsWith(".html"))
+                .max(Comparator.comparingLong(p -> p.toFile().lastModified()))
+                .orElse(null);
+        } catch (IOException e) {
+            return null;
+        }
+    }
+
+    private String sanitize(String title) {
+        return title.replaceAll("[^a-zA-Z0-9.-]", "_") + ".html";
     }
 
     public void save() {
@@ -177,10 +214,9 @@ public class TodoView extends BorderPane {
         HTMLEditor editor = new HTMLEditor();
         editor.setPrefHeight(2000);
 
-        // Customize the editor
         customizeEditor(editor);
 
-        String filename = title.replaceAll("[^a-zA-Z0-9.-]", "_") + ".html";
+        String filename = sanitize(title);
         Path path = DATA_DIR.resolve(filename);
         if (Files.exists(path)) {
             try { editor.setHtmlText(new String(Files.readAllBytes(path))); } catch (IOException e) {}
@@ -199,11 +235,9 @@ public class TodoView extends BorderPane {
     // --- CUSTOMIZATION LOGIC ---
 
     private void customizeEditor(HTMLEditor editor) {
-        // Wait for Skin to load
         if (editor.getSkin() != null) {
             applyCustomizations(editor);
         } else {
-            // Wait for the visual skin to load, then run immediately
             editor.skinProperty().addListener((obs, old, skin) -> {
                 if (skin != null) Platform.runLater(() -> applyCustomizations(editor));
             });
@@ -217,13 +251,11 @@ public class TodoView extends BorderPane {
 
         ToolBar topToolbar = (ToolBar) toolbars.toArray()[0];
 
-        // --- 1. Add Print Button (Top Toolbar)) ---
         Button printBtn = new Button("🖨");
         printBtn.setStyle("-fx-font-size: 11px; -fx-padding: 4 8;");
         printBtn.setOnAction(e -> printEditor(editor));
         topToolbar.getItems().add(printBtn);
 
-        // --- 2. Add Link Button (Bottom Toolbar) ---
         Button linkBtn = new Button("🔗");
         linkBtn.setStyle("-fx-font-size: 11px; -fx-padding: 4 8;");
         linkBtn.setOnAction(e -> promptForLink(editor));
@@ -299,7 +331,7 @@ public class TodoView extends BorderPane {
     }
 
     private void saveTab(Tab tab, String content) {
-        String filename = tab.getText().replaceAll("[^a-zA-Z0-9.-]", "_") + ".html";
+        String filename = sanitize(tab.getText());
         try (BufferedWriter writer = Files.newBufferedWriter(DATA_DIR.resolve(filename))) {
             writer.write(content);
         } catch (IOException e) {}
