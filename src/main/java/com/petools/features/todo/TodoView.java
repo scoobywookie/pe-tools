@@ -196,9 +196,9 @@ public class TodoView extends BorderPane {
     // --- COLOR CONTRAST HELPER ---
     private String getContrastTextColor(String hexColor) {
         // Parse the Hex String (#RRGGBB) into RGB numbers
-        int r = Integer.valueOf(hexColor.substring(1, 3), 16);
-        int g = Integer.valueOf(hexColor.substring(3, 5), 16);
-        int b = Integer.valueOf(hexColor.substring(5, 7), 16);
+        int r = Integer.parseInt(hexColor.substring(1, 3), 16);
+        int g = Integer.parseInt(hexColor.substring(3, 5), 16);
+        int b = Integer.parseInt(hexColor.substring(5, 7), 16);
 
         // Calculate "Perceived Brightness" (YIQ Formula)
         // This weighs Green the most because human eyes are sensitive to it
