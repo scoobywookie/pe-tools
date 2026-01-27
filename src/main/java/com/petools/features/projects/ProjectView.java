@@ -13,6 +13,7 @@ import javafx.beans.property.SimpleStringProperty;
 import javafx.collections.FXCollections;
 import javafx.collections.ObservableList;
 import javafx.collections.transformation.FilteredList;
+import javafx.collections.transformation.SortedList;
 import javafx.geometry.Insets;
 import javafx.scene.control.Alert;
 import javafx.scene.control.Button;
@@ -81,28 +82,36 @@ public class ProjectView extends BorderPane {
         masterData = FXCollections.observableArrayList();
         loadData();
 
+        // Wrap the ObservableList in a FilteredList (initially displaying all data).
         filteredData = new FilteredList<>(masterData, p -> true);
-        table.setItems(filteredData);
+
+        // Wrap the FilteredList in a SortedList.
+        SortedList<Project> sortedData = new SortedList<>(filteredData);
+
+        // Bind the SortedList comparator to the TableView comparator.
+        // Otherwise, clicking the column header won't sort the list.
+        sortedData.comparatorProperty().bind(table.comparatorProperty());
+
+        // Add sorted (and filtered) data to the table.
+        table.setItems(sortedData);
         table.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY);
 
         // --- COL 1: Project Name (Editable) ---
         TableColumn<Project, String> colName = new TableColumn<>("Project Name");
         colName.setCellValueFactory(data -> data.getValue().nameProperty());
-        // Enable Text Field Editing
         colName.setCellFactory(TextFieldTableCell.forTableColumn());
-        // Save on Enter
         colName.setOnEditCommit(e -> {
             e.getRowValue().nameProperty().set(e.getNewValue());
+            saveData();
         });
 
         // --- COL 2: Client (Editable) ---
         TableColumn<Project, String> colClient = new TableColumn<>("Client");
         colClient.setCellValueFactory(data -> data.getValue().clientProperty());
-        // Enable Text Field Editing
         colClient.setCellFactory(TextFieldTableCell.forTableColumn());
-        // Save on Enter
         colClient.setOnEditCommit(e -> {
-            e.getRowValue().nameProperty().set(e.getNewValue());
+            e.getRowValue().clientProperty().set(e.getNewValue());
+            saveData();
         });
 
         // --- COL 3: Status (Dropdown Edit + Colors) ---
@@ -116,9 +125,7 @@ public class ProjectView extends BorderPane {
         colStatus.setCellFactory(col -> new ComboBoxTableCell<>(statusOptions) {
             @Override
             public void updateItem(String item, boolean empty) {
-                super.updateItem(item, empty); // This sets up the dropdown logic
-
-                // Now apply the colors
+                super.updateItem(item, empty);
                 if (empty || item == null) {
                     setStyle("");
                 } else {
@@ -140,7 +147,7 @@ public class ProjectView extends BorderPane {
 
         // --- COL 4: Folder Link (Double-Click to Edit) ---
         TableColumn<Project, String> colFolder = new TableColumn<>("Folder");
-        colFolder.setSortable(false);
+        colFolder.setSortable(false); // Folder paths usually don't need sorting, but you can set to true if desired
         colFolder.setPrefWidth(60);
         colFolder.setCellValueFactory(data -> data.getValue().folderPathProperty()); // Bind property
 
@@ -358,7 +365,7 @@ public class ProjectView extends BorderPane {
             while ((line = reader.readLine()) != null) {
                 String[] parts = line.split(",", -1);
                 if (parts.length >= 4) {
-                    String folder = (parts.length > 4) ? unescape(parts[4]) : "";
+                    String folder = (parts.length > 3) ? unescape(parts[3]) : "";
                     masterData.add(new Project(
                         unescape(parts[0]),
                         unescape(parts[1]),
