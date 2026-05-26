@@ -2,8 +2,10 @@
   (command "FILEDIA" 0)  ; Suppress dialogs
 
   ;; Define paths
-  (setq scriptFile "C:\\Users\\danie\\Desktop\\CAD-IMPORTS\\circle_layers.scr")
-  (setq pyPath "C:\\Users\\danie\\Desktop\\Daniel\\Python Projects\\drawcircleapp\\address_to_scr.py")
+  (setq homePath (getenv "USERPROFILE"))
+  (setq scriptFile (strcat homePath "\\Desktop\\CAD-IMPORTS\\circle_layers.scr"))
+  (setq parentfolder (vl-filename-directory "full_draw_circ.lsp"))
+  (setq pyPath (strcat parentfolder "\\address_to_scr.py"))
 
   ;; Prompt user for address
   (setq address (getstring T "\nEnter address: "))
